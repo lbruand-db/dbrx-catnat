@@ -49,10 +49,17 @@ CREATE VOLUME IF NOT EXISTS IDENTIFIER(:catalog || '.catnat_bronze.raw')
 -- COMMAND ----------
 
 -- MAGIC %md ## Verification
+-- MAGIC
+-- MAGIC `SHOW SCHEMAS IN IDENTIFIER(:catalog)` is currently rejected by the SQL
+-- MAGIC parser (parameter marker not allowed in this position), so we verify via
+-- MAGIC `information_schema` instead.
 
 -- COMMAND ----------
 
-SHOW SCHEMAS IN IDENTIFIER(:catalog) LIKE 'catnat*';
+SELECT schema_name
+FROM IDENTIFIER(:catalog || '.information_schema.schemata')
+WHERE schema_name LIKE 'catnat_%'
+ORDER BY schema_name;
 
 -- COMMAND ----------
 

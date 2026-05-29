@@ -43,7 +43,6 @@ CREATE WIDGET TEXT input_path DEFAULT '/Volumes/serverless_stable_po64og_catalog
 CREATE OR REPLACE TABLE IDENTIFIER(:catalog || '.catnat_bronze.hazard_rga_susceptibility')
   COMMENT 'Bronze: BRGM RGA (retrait-gonflement des argiles) susceptibility polygons. Source: Géorisques WFS layer ms:ALEARG_REALISE. Licence: Etalab 2.0. Generated using BRGM data on Géorisques (https://www.georisques.gouv.fr).'
   TBLPROPERTIES (
-    'delta.feature.geometryEncoding' = 'supported',
     'catnat.layer' = 'hazard_rga',
     'catnat.peril' = 'drought',
     'catnat.source' = 'georisques-wfs',

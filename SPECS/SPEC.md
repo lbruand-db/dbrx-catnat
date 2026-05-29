@@ -104,7 +104,7 @@ All tables in Unity Catalog under `catnat.{bronze,silver,gold}`.
 | `hazard_ppri_flood_zones` | Géorisques (PPRI) | Polygon per zone, per commune | Officially regulated flood zones |
 | `hazard_tri_flood` | Géorisques (TRI — Territoires à Risque Important) | Polygon | Modeled flood footprints, 3 return periods |
 | `hazard_rga_susceptibility` | BRGM (Géorisques) | Polygon, 4 levels (faible→fort) | Clay shrinkage exposure |
-| `hazard_storm_footprints` | C3S Windstorm reanalysis (`sis-european-wind-storm-reanalysis`) + ERA5 `fg10` fallback | Polygon per event | Time-stamped; covers Ciarán, Domingos, Eunice. Copernicus licence — redistributable with attribution. |
+| ~~`hazard_storm_footprints`~~ | C3S Windstorm reanalysis (`sis-european-wind-storm-reanalysis`) + ERA5 `fg10` fallback | Polygon per event | **Deferred out of v1** — see §10.6. Storm/tempête peril stays in the narrative but its layer is post-v1. |
 | `hazard_climate_rcp` | DRIAS / Copernicus | H3 cell × peril × scenario | RCP 4.5 / 8.5 deltas |
 | `admin_communes` + reference layers (buildings, addresses, hydrography, transport) | IGN **BD TOPO v3.5** via [`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks) | 60 layers across 9 INSPIRE themes | Pre-built loader. See §4.4. |
 
@@ -282,7 +282,7 @@ Design rules:
 
 5. **Language convention** — **English everywhere in code, SQL, tool descriptions, comments, docs.** Data stays on French soil (see §8 data residency). The agent itself replies in the user's language — French question → French answer — but the engineering surface is English-only.
 
-6. **Named-storm dataset** — **Copernicus C3S Windstorm reanalysis** (`sis-european-wind-storm-reanalysis`) as primary; **ERA5 `fg10` 10m wind gust** as fallback for events not yet in the catalogue. Both are under the **Copernicus licence** (redistributable with attribution), so they ship inside a customer-runnable demo cleanly.
+6. **Named-storm dataset — DEFERRED OUT OF v1.** The storm/tempête peril stays in the demo narrative (Act 2 still talks about "what just happened"), but for v1 we skip the actual `hazard_storm_footprints` layer to compress scope. When we reinstate it, the chosen source is **Copernicus C3S Windstorm reanalysis** (`sis-european-wind-storm-reanalysis`) as primary; **ERA5 `fg10` 10m wind gust** as fallback. Both are under the **Copernicus licence** (redistributable with attribution).
    - **Why not Météo-France directly:** since 1 Jan 2024 their data is Etalab 2.0 / Licence Ouverte (redistributable), but they do **not** publish a ready-made `event_name + geometry` storm-footprint product — only raw inputs (SYNOP, AROME/ARPEGE grids, vigilance bulletins). Building footprints ourselves is out of scope for this demo.
    - **Coverage check:** C3S catalogue includes Ciarán (Nov 2023), Domingos (Nov 2023), Eunice (Feb 2022) — the storms most likely to come up in Act 2 of the demo script.
    - **Skipped alternatives:** XWS (Reading) stops at 2012, no recent storms; EMS Rapid Mapping is flood/fire-oriented, not windstorm; CatDat / Risk Layer / PERILS / Verisk are proprietary and not redistributable.

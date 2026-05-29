@@ -8,9 +8,31 @@ Covers the three perils that dominate the French CatNat loss ratio: **inondation
 
 ## Status
 
-Spec stage. See [`SPECS/SPEC.md`](SPECS/SPEC.md) for the detailed build spec — narrative, architecture, data model, MCP tool surface, demo script, and build phases.
+**Phase 0 — Data foundation: in progress.** The BRGM RGA (clay-shrinkage) layer is ingested end-to-end (bronze → silver → gold) on the `fevm-stable-po64og` workspace. PPRI / TRI flood layers and the IGN BD TOPO reference layers (via [`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks)) are the next bronze drops. C3S windstorms are deferred out of v1.
 
-No code yet.
+See [`SPECS/SPEC.md`](SPECS/SPEC.md) for the detailed build spec — narrative, architecture, data model, MCP tool surface, demo script, build phases, and decisions.
+
+## Quick start
+
+```bash
+# Install Python deps via uv (pyproject.toml)
+uv sync
+
+# Smoke-test connectivity + ST_* / H3 functions on the warehouse
+uv run catnat probe
+
+# Create catalog/schemas/volume (idempotent)
+uv run catnat setup
+
+# End-to-end: WFS pull → bronze → silver → gold for BRGM RGA
+uv run catnat pipeline rga          # 100-feature sample
+uv run catnat pipeline rga --full   # national dataset
+
+# Run any SQL notebook standalone, passing widget params via -p
+uv run catnat run notebooks/silver/10_rga_susceptibility.sql -p catalog=foo
+```
+
+Auth uses the `fevm-stable-po64og` Databricks CLI profile by default; override with `CATNAT_PROFILE`, `CATNAT_WAREHOUSE_ID`, or `CATNAT_CATALOG` env vars (see `src/catnat/config.py`).
 
 ## Architecture at a glance
 
@@ -38,9 +60,20 @@ This project relies on open public data — attributions belong in any redistrib
 ## Repo layout
 
 ```
-SPECS/
-  SPEC.md          ← source of truth: spec, architecture, demo script, decisions
-README.md          ← this file
+SPECS/SPEC.md            ← source of truth: spec, architecture, demo, decisions
+README.md                ← this file
+pyproject.toml           ← uv-managed Python project (the `catnat` CLI)
+databricks.yml           ← Databricks Asset Bundle (dev + prod targets)
+src/catnat/              ← Python package powering the `catnat` CLI
+  cli.py                 ←   typer entry point
+  sql.py                 ←   notebook splitter + warehouse runner
+  fetch/                 ←   per-source fetchers (RGA today, more coming)
+notebooks/
+  _setup/                ←   catalog / schema / volume bootstrap
+  bronze/                ←   raw → typed Delta with native GEOMETRY(4326)
+  silver/                ←   geometry repair, labels, centroid H3
+  gold/                  ←   H3 r=9 polyfill for sub-second point joins
+tests/                   ←   unit tests (no Databricks access required)
 ```
 
-More layout (`notebooks/`, `app/`, `mcp/`, `bundle.yml`) will land as the build phases in §7 of the spec are executed.
+Phase 1+ (`app/`, `mcp/`) will land as the build phases in §7 of the spec are executed.
