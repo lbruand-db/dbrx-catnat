@@ -37,6 +37,15 @@ def _is_transient_wfs_error(err: Exception) -> bool:
 
 
 def workspace_client() -> WorkspaceClient:
+    """Build a Databricks SDK client.
+
+    On the operator's laptop we authenticate via the named CLI profile. Inside
+    a Databricks job (notebook or wheel task) the SDK picks up the ambient
+    auth from `DATABRICKS_RUNTIME_VERSION` / workspace context, so we omit the
+    profile to let it auto-discover.
+    """
+    if CONFIG.is_databricks_runtime:
+        return WorkspaceClient()
     return WorkspaceClient(profile=CONFIG.profile)
 
 

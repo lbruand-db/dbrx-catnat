@@ -20,9 +20,6 @@
 
 -- COMMAND ----------
 
-CREATE WIDGET TEXT catalog DEFAULT 'serverless_stable_po64og_catalog';
-CREATE WIDGET TEXT input_approuv DEFAULT '/Volumes/serverless_stable_po64og_catalog/catnat_bronze/raw/ppri/ppri_approuv_sample.geojsonl';
-CREATE WIDGET TEXT input_prescrit DEFAULT '/Volumes/serverless_stable_po64og_catalog/catnat_bronze/raw/ppri/ppri_prescrit_sample.geojsonl';
 
 -- COMMAND ----------
 

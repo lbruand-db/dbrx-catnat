@@ -1,0 +1,175 @@
+# DAB jobs — one per peril, mirroring `catnat pipeline <peril>`.
+#
+# Each job runs:
+#   setup           — SQL notebook on the warehouse (idempotent catalog setup)
+#   fetch_<peril>   — python_wheel_task on serverless Python compute, pulls
+#                     Géorisques WFS into the bronze raw volume.
+#   bronze_<peril>  — SQL notebook on the warehouse
+#   silver_<peril>  — SQL notebook on the warehouse
+#   gold_<peril>    — SQL notebook on the warehouse
+#
+# The fetcher uses ambient Databricks auth when DATABRICKS_RUNTIME_VERSION is
+# set (see `catnat.fetch.base.workspace_client`).
+
+resources:
+  jobs:
+
+    catnat_rga:
+      name: catnat-rga-${bundle.target}
+      tasks:
+        - task_key: setup
+          notebook_task:
+            notebook_path: ../notebooks/_setup/00_create_catalog.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              catalog: ${var.catalog}
+        - task_key: fetch_rga
+          depends_on: [{ task_key: setup }]
+          python_wheel_task:
+            package_name: catnat
+            entry_point: catnat-job
+            parameters:
+              - fetch
+              - rga
+              - "--catalog"
+              - ${var.catalog}
+          environment_key: geo
+        - task_key: bronze_rga
+          depends_on: [{ task_key: fetch_rga }]
+          notebook_task:
+            notebook_path: ../notebooks/bronze/10_rga_susceptibility.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              catalog: ${var.catalog}
+              input_path: /Volumes/${var.catalog}/catnat_bronze/raw/rga/rga_${var.data_size}.geojsonl
+        - task_key: silver_rga
+          depends_on: [{ task_key: bronze_rga }]
+          notebook_task:
+            notebook_path: ../notebooks/silver/10_rga_susceptibility.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              catalog: ${var.catalog}
+        - task_key: gold_rga
+          depends_on: [{ task_key: silver_rga }]
+          notebook_task:
+            notebook_path: ../notebooks/gold/10_rga_h3.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              catalog: ${var.catalog}
+              resolution: "9"
+      environments:
+        - environment_key: geo
+          spec:
+            client: "4"
+            dependencies:
+              - ../dist/*.whl
+              - geopandas
+              - pyogrio
+              - shapely
+
+    catnat_ppri:
+      name: catnat-ppri-${bundle.target}
+      tasks:
+        - task_key: setup
+          notebook_task:
+            notebook_path: ../notebooks/_setup/00_create_catalog.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              catalog: ${var.catalog}
+        - task_key: fetch_ppri
+          depends_on: [{ task_key: setup }]
+          python_wheel_task:
+            package_name: catnat
+            entry_point: catnat-job
+            parameters:
+              - fetch
+              - ppri
+              - "--catalog"
+              - ${var.catalog}
+          environment_key: geo
+        - task_key: bronze_ppri
+          depends_on: [{ task_key: fetch_ppri }]
+          notebook_task:
+            notebook_path: ../notebooks/bronze/20_ppri_communes.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              catalog: ${var.catalog}
+              input_approuv: /Volumes/${var.catalog}/catnat_bronze/raw/ppri/ppri_approuv_${var.data_size}.geojsonl
+              input_prescrit: /Volumes/${var.catalog}/catnat_bronze/raw/ppri/ppri_prescrit_${var.data_size}.geojsonl
+        - task_key: silver_ppri
+          depends_on: [{ task_key: bronze_ppri }]
+          notebook_task:
+            notebook_path: ../notebooks/silver/20_ppri_communes.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              catalog: ${var.catalog}
+        - task_key: gold_ppri
+          depends_on: [{ task_key: silver_ppri }]
+          notebook_task:
+            notebook_path: ../notebooks/gold/20_ppri_communes_h3.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              catalog: ${var.catalog}
+              resolution: "9"
+      environments:
+        - environment_key: geo
+          spec:
+            client: "4"
+            dependencies:
+              - ../dist/*.whl
+              - geopandas
+              - pyogrio
+              - shapely
+
+    catnat_tri:
+      name: catnat-tri-${bundle.target}
+      tasks:
+        - task_key: setup
+          notebook_task:
+            notebook_path: ../notebooks/_setup/00_create_catalog.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              catalog: ${var.catalog}
+        - task_key: fetch_tri
+          depends_on: [{ task_key: setup }]
+          python_wheel_task:
+            package_name: catnat
+            entry_point: catnat-job
+            parameters:
+              - fetch
+              - tri
+              - "--catalog"
+              - ${var.catalog}
+          environment_key: geo
+        - task_key: bronze_tri
+          depends_on: [{ task_key: fetch_tri }]
+          notebook_task:
+            notebook_path: ../notebooks/bronze/30_tri_flood.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              catalog: ${var.catalog}
+              input_path: /Volumes/${var.catalog}/catnat_bronze/raw/tri/tri_*_*_${var.data_size}.geojsonl
+        - task_key: silver_tri
+          depends_on: [{ task_key: bronze_tri }]
+          notebook_task:
+            notebook_path: ../notebooks/silver/30_tri_flood.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              catalog: ${var.catalog}
+        - task_key: gold_tri
+          depends_on: [{ task_key: silver_tri }]
+          notebook_task:
+            notebook_path: ../notebooks/gold/30_tri_flood_h3.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              catalog: ${var.catalog}
+              resolution: "9"
+      environments:
+        - environment_key: geo
+          spec:
+            client: "4"
+            dependencies:
+              - ../dist/*.whl
+              - geopandas
+              - pyogrio
+              - shapely

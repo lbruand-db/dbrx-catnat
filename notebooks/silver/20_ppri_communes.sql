@@ -15,7 +15,6 @@
 
 -- COMMAND ----------
 
-CREATE WIDGET TEXT catalog DEFAULT 'serverless_stable_po64og_catalog';
 
 -- COMMAND ----------
 

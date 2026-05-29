@@ -25,8 +25,6 @@
 
 -- COMMAND ----------
 
-CREATE WIDGET TEXT catalog DEFAULT 'serverless_stable_po64og_catalog';
-CREATE WIDGET TEXT input_path DEFAULT '/Volumes/serverless_stable_po64og_catalog/catnat_bronze/raw/rga/rga_sample.geojsonl';
 
 -- COMMAND ----------
 

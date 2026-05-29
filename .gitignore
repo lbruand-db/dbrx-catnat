@@ -10,6 +10,9 @@ __pycache__/
 .bundle/
 *.pyc
 
+# Wheel build artifacts (DAB rebuilds on every deploy)
+dist/
+
 # OS
 .DS_Store
 Thumbs.db

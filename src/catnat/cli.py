@@ -14,6 +14,7 @@ Subcommands:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import typer
@@ -21,6 +22,13 @@ from rich.console import Console
 
 from catnat.config import CONFIG
 from catnat.sql import Statement, WarehouseRunner
+
+
+def _set_catalog_env(catalog: str | None) -> None:
+    """Push a `--catalog` flag into CATNAT_CATALOG so CONFIG sees it."""
+    if catalog:
+        os.environ["CATNAT_CATALOG"] = catalog
+
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 fetch_app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -104,8 +112,12 @@ def fetch_rga(
     ),
     full: bool = typer.Option(False, "--full", help="Pull the full national dataset."),
     force: bool = typer.Option(False, "--force", help="Re-download even if cached in the volume."),
+    catalog: str = typer.Option(
+        None, "--catalog", help="Override CATNAT_CATALOG for this run (used by DAB jobs)."
+    ),
 ) -> None:
     """Pull BRGM RGA polygons from Géorisques WFS and upload to bronze.raw."""
+    _set_catalog_env(catalog)
     from catnat.fetch import rga
 
     n_request = None if full else limit
@@ -123,8 +135,12 @@ def fetch_ppri(
     ),
     full: bool = typer.Option(False, "--full", help="Pull the full national dataset."),
     force: bool = typer.Option(False, "--force", help="Re-download even if cached in the volume."),
+    catalog: str = typer.Option(
+        None, "--catalog", help="Override CATNAT_CATALOG for this run (used by DAB jobs)."
+    ),
 ) -> None:
     """Pull PPRI commune footprints (approuv + prescrit) and upload to bronze.raw."""
+    _set_catalog_env(catalog)
     from catnat.fetch import ppri
 
     n_request = None if full else limit
@@ -143,8 +159,12 @@ def fetch_tri(
     ),
     full: bool = typer.Option(False, "--full", help="Pull the full national dataset."),
     force: bool = typer.Option(False, "--force", help="Re-download even if cached in the volume."),
+    catalog: str = typer.Option(
+        None, "--catalog", help="Override CATNAT_CATALOG for this run (used by DAB jobs)."
+    ),
 ) -> None:
     """Pull TRI flood-hazard footprints (11 ALEA_SYNT layers, one file each)."""
+    _set_catalog_env(catalog)
     from catnat.fetch import tri
 
     n_request = None if full else limit

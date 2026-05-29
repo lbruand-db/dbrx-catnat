@@ -13,8 +13,6 @@
 
 -- COMMAND ----------
 
-CREATE WIDGET TEXT catalog DEFAULT 'serverless_stable_po64og_catalog';
-CREATE WIDGET TEXT resolution DEFAULT '9';
 
 -- COMMAND ----------
 

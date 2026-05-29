@@ -252,7 +252,7 @@ Design rules:
 - **Latency budget**, per chat turn: agent first token ≤ 2s; first map update ≤ 5s; full Kepler view ≤ 10s.
 - **Warehouse:** Small Serverless SQL WH is the demo target — if a query needs Medium, the underlying table layout is wrong.
 - **Cost target** for a 30-min demo session: < €5 (mostly SQL WH idle + FMAPI tokens).
-- **Reproducibility:** the full stack is deployable from `databricks bundle deploy` against a fresh workspace.
+- **Reproducibility:** the full stack is deployable from `databricks bundle deploy` against a fresh workspace. The `catnat` Python package builds to a wheel that DAB uploads automatically; each peril (`rga`, `ppri`, `tri`) ships as a Databricks Job whose tasks chain `setup → fetch (python_wheel_task on serverless) → bronze → silver → gold` (SQL notebooks on the warehouse). The local `catnat` CLI stays as the fast inner-loop tool; both paths target the exact same notebooks and the exact same volume layout.
 - **Governance posture:** every chat turn that ran a query is loggable to a UC audit table — sellable as a differentiator vs. shadow-IT QGIS workflows.
 - **Data residency:** all data stays on French / EU soil. Target workspace is **AWS `eu-west-3` (Paris)**; Copernicus / ERA5 sources are staged from the EU mirrors of the AWS Open Data registry to avoid cross-region egress. No data leaves the EU at any stage of the pipeline.
 - **Language convention:** code, SQL, table/column names, MCP tool descriptions, agent system prompt, comments, and docs are all in **English**. The agent renders user-facing responses in the language of the question (French in / French out, English in / English out).

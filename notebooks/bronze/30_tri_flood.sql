@@ -22,10 +22,8 @@
 
 -- COMMAND ----------
 
-CREATE WIDGET TEXT catalog DEFAULT 'serverless_stable_po64og_catalog';
 -- input_path is a glob across the eleven per-layer files written by
 -- `catnat fetch tri`. Pattern: tri/tri_<scenario>_<intensity>_<suffix>.geojsonl
-CREATE WIDGET TEXT input_path DEFAULT '/Volumes/serverless_stable_po64og_catalog/catnat_bronze/raw/tri/tri_*_*_sample.geojsonl';
 
 -- COMMAND ----------
 

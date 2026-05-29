@@ -13,15 +13,21 @@ variables:
       schemas with `catnat_`. Swap this to `catnat` on workspaces where we have
       CREATE CATALOG on the metastore.
     default: serverless_stable_po64og_catalog
-  schema_bronze:
-    default: catnat_bronze
-  schema_silver:
-    default: catnat_silver
-  schema_gold:
-    default: catnat_gold
   warehouse_id:
-    description: SQL warehouse used by notebook tasks.
+    description: SQL warehouse used by all SQL notebook tasks.
     default: 1c97ee257092c2b3
+  data_size:
+    description: |
+      `sample` (default — 100/200/30-feature caps per layer) or `full` (national
+      dataset). Drives both the fetcher arguments and the bronze input-path
+      suffix.
+    default: sample
+
+artifacts:
+  catnat_wheel:
+    type: whl
+    path: .
+    build: uv build --wheel --out-dir dist
 
 targets:
   dev:
@@ -36,3 +42,5 @@ targets:
     workspace:
       host: https://fevm-serverless-stable-po64og.cloud.databricks.com
       profile: fevm-stable-po64og
+    variables:
+      data_size: full

@@ -18,6 +18,9 @@ dependencies = [
 
 [project.scripts]
 catnat = "catnat.cli:app"
+# Databricks `python_wheel_task` entry point — wraps app() to swallow the
+# clean `SystemExit(0)` that the wheel-task runner otherwise treats as failure.
+catnat-job = "catnat.jobs:main"
 
 [build-system]
 requires = ["hatchling"]

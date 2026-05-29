@@ -21,7 +21,7 @@ Covers the three perils that dominate the French CatNat loss ratio: **inondation
 
 See [`SPECS/SPEC.md`](SPECS/SPEC.md) for the detailed build spec — narrative, architecture, data model, MCP tool surface, demo script, build phases, decisions, and the operational conventions in §8.1 (idempotency, cache-first downloads, `.env` parameters).
 
-## Quick start
+## Quick start — local inner loop
 
 ```bash
 # 1. Configure operator parameters (CATNAT_PROFILE, _WAREHOUSE_ID, _CATALOG).
@@ -50,6 +50,20 @@ uv run catnat run notebooks/silver/10_rga_susceptibility.sql -p catalog=foo
 Operator parameters live in `.env` (template: `.env.example`). Real env vars
 win over `.env`, so CI can override per-job without touching files. See
 `src/catnat/config.py` for the resolution order.
+
+## Deploy as Databricks Asset Bundles
+
+The same notebooks ship as **Databricks Jobs** via DAB — fetch on
+serverless Python compute, SQL stages on the warehouse:
+
+```bash
+databricks bundle validate -t dev
+databricks bundle deploy -t dev         # builds the catnat wheel + uploads
+databricks bundle run catnat_rga -t dev # or catnat_ppri / catnat_tri
+databricks bundle deploy -t prod        # data_size=full for the prod target
+```
+
+Each job's tasks: `setup → fetch_<peril> → bronze_<peril> → silver_<peril> → gold_<peril>`. The local CLI and the DAB jobs target the **same notebooks** and the **same volume layout** — switching between them is invisible to the data.
 
 ## Architecture at a glance
 
@@ -80,13 +94,15 @@ This project relies on open public data — attributions belong in any redistrib
 SPECS/SPEC.md            ← source of truth: spec, architecture, demo, decisions
 README.md                ← this file
 .env.example             ← copy to .env (gitignored) and edit operator params
-pyproject.toml           ← uv-managed Python project (the `catnat` CLI)
-databricks.yml           ← Databricks Asset Bundle (dev + prod targets)
-src/catnat/              ← Python package powering the `catnat` CLI
-  cli.py                 ←   typer entry point
-  config.py              ←   .env + env-var resolution
+pyproject.toml           ← uv-managed Python project (the `catnat` CLI + wheel)
+databricks.yml           ← Databricks Asset Bundle (dev + prod targets, wheel artifact)
+resources/jobs.yml       ← DAB job definitions, one per peril
+src/catnat/              ← Python package powering both the CLI and the DAB jobs
+  cli.py                 ←   typer entry point (local inner loop)
+  jobs.py                ←   `catnat-job` entry point used by python_wheel_task
+  config.py              ←   .env + env-var resolution (lazy/reactive)
   sql.py                 ←   notebook splitter + warehouse runner
-  fetch/                 ←   per-source fetchers (RGA, PPRI; more coming)
+  fetch/                 ←   per-source fetchers (RGA, PPRI, TRI)
     base.py              ←     shared cache-check + WFS-to-GeoJSONSeq plumbing
 notebooks/
   _setup/                ←   catalog / schema / volume bootstrap
