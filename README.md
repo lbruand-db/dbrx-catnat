@@ -5,6 +5,7 @@
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![pytest](https://img.shields.io/badge/tested%20with-pytest-0A9EDC.svg)](https://docs.pytest.org/)
+[![DuckDB](https://img.shields.io/badge/DuckDB-tested-FFF000.svg?logo=duckdb&logoColor=black)](https://duckdb.org/)
 [![Databricks](https://img.shields.io/badge/Databricks-Lakehouse-FF3621.svg?logo=databricks&logoColor=white)](https://www.databricks.com/)
 [![Databricks Asset Bundles](https://img.shields.io/badge/DAB-asset%20bundles-FF3621.svg?logo=databricks&logoColor=white)](https://docs.databricks.com/dev-tools/bundles/index.html)
 

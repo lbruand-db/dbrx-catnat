@@ -257,7 +257,31 @@ Design rules:
 - **Data residency:** all data stays on French / EU soil. Target workspace is **AWS `eu-west-3` (Paris)**; Copernicus / ERA5 sources are staged from the EU mirrors of the AWS Open Data registry to avoid cross-region egress. No data leaves the EU at any stage of the pipeline.
 - **Language convention:** code, SQL, table/column names, MCP tool descriptions, agent system prompt, comments, and docs are all in **English**. The agent renders user-facing responses in the language of the question (French in / French out, English in / English out).
 
-### 8.1 Operational conventions for the ingest pipeline
+### 8.1 Testability — silver + gold notebooks run on DuckDB
+
+Every silver and gold notebook is exercised in CI against an in-memory
+**DuckDB** session (spatial + h3 community extensions) using a sqlglot-style
+translation shim (`src/catnat/duck.py`). The notebooks are not duplicated —
+we transform the same `.sql` files at runtime:
+
+- `IDENTIFIER(:catalog || '.schema.table')` is unwrapped to `schema.table`.
+- `:param` markers get substituted with quoted SQL literals.
+- `h3_longlatash3(lon, lat, r)` → `h3_latlng_to_cell(lat, lon, r)` (arg swap).
+- `h3_polyfillash3(ST_AsBinary(geom), r)` → `h3_polygon_wkt_to_cells(ST_AsText(geom), r)`.
+- `TRY_TO_DATE(s, 'dd-MM-yyyy')` → `try_strptime(s, '%d-%m-%Y')::DATE`.
+- `LATERAL VIEW explode(arr) AS x` → `, UNNEST(arr) AS t(x)` (nested-paren-aware).
+- `TBLPROPERTIES`, table-level `COMMENT 'text'`, `ALTER TABLE … COMMENT`, and
+  `OPTIMIZE … ZORDER BY …` are dropped — cosmetic / Delta-only.
+
+Tests live in `tests/test_*_duckdb.py`: synthetic bronze rows are seeded
+directly, silver + gold notebooks run against them, assertions cover label
+mapping, geometry-validity filtering, date parsing, and H3 polyfill output.
+No Databricks workspace is required, so CI catches regressions for €0.
+
+When we add a new layer (TRI, IGN, climate, portfolio), the corresponding
+silver/gold notebooks ship with a matching `test_*_duckdb.py`.
+
+### 8.2 Operational conventions for the ingest pipeline
 
 Three rules govern every fetcher + bronze/silver/gold notebook trio:
 

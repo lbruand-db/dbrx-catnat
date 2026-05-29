@@ -30,6 +30,8 @@ packages = ["src/catnat"]
 dev = [
     "pytest>=8",
     "ruff>=0.6",
+    "duckdb>=1.0",
+    "sqlglot>=25",
 ]
 
 [tool.ruff]
@@ -43,6 +45,9 @@ select = ["E", "F", "I", "B", "UP", "SIM"]
 # typer's idiomatic API requires calling Argument()/Option() in defaults;
 # B008 ("function call in argument defaults") is the rule that complains.
 "src/catnat/cli.py" = ["B008"]
+# Test fixtures embed long SQL VALUES literals (WKT polygons, PPRI rows) that
+# can't be wrapped without obscuring the data shape. E501 is line-length.
+"tests/*" = ["E501"]
 
 [tool.pytest.ini_options]
 markers = [
