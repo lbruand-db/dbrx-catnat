@@ -1,5 +1,13 @@
 # dbrx-catnat — GeoCatNat
 
+[![CI](https://github.com/lbruand-db/dbrx-catnat/actions/workflows/ci.yml/badge.svg)](https://github.com/lbruand-db/dbrx-catnat/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![pytest](https://img.shields.io/badge/tested%20with-pytest-0A9EDC.svg)](https://docs.pytest.org/)
+[![Databricks](https://img.shields.io/badge/Databricks-Lakehouse-FF3621.svg?logo=databricks&logoColor=white)](https://www.databricks.com/)
+[![Databricks Asset Bundles](https://img.shields.io/badge/DAB-asset%20bundles-FF3621.svg?logo=databricks&logoColor=white)](https://docs.databricks.com/dev-tools/bundles/index.html)
+
 > An agentic GIS for insurers, on the Databricks Lakehouse.
 
 A demo aimed at French P&C insurers that collapses three tools (Excel for portfolios, QGIS/ArcGIS for hazard maps, BI for claims) into a single Lakehouse-native app. A non-GIS user — underwriter, claims manager, exec — drives the map by **chatting** with it. The LLM agent translates intent into spatial SQL and layer operations against Unity Catalog data, with results landing on **Leaflet** (operational) and **Kepler.gl** (analytical / time-animated) panes.
@@ -8,31 +16,38 @@ Covers the three perils that dominate the French CatNat loss ratio: **inondation
 
 ## Status
 
-**Phase 0 — Data foundation: in progress.** The BRGM RGA (clay-shrinkage) layer is ingested end-to-end (bronze → silver → gold) on the `fevm-stable-po64og` workspace. PPRI / TRI flood layers and the IGN BD TOPO reference layers (via [`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks)) are the next bronze drops. C3S windstorms are deferred out of v1.
+**Phase 0 — Data foundation: in progress.** The BRGM RGA (clay-shrinkage) and Géorisques PPRI (flood, commune-level) layers are ingested end-to-end (bronze → silver → gold) on the `fevm-stable-po64og` workspace. TRI flood footprints and the IGN BD TOPO reference layers (via [`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks)) are the next bronze drops. C3S windstorms are deferred out of v1.
 
-See [`SPECS/SPEC.md`](SPECS/SPEC.md) for the detailed build spec — narrative, architecture, data model, MCP tool surface, demo script, build phases, and decisions.
+See [`SPECS/SPEC.md`](SPECS/SPEC.md) for the detailed build spec — narrative, architecture, data model, MCP tool surface, demo script, build phases, decisions, and the operational conventions in §8.1 (idempotency, cache-first downloads, `.env` parameters).
 
 ## Quick start
 
 ```bash
-# Install Python deps via uv (pyproject.toml)
+# 1. Configure operator parameters (CATNAT_PROFILE, _WAREHOUSE_ID, _CATALOG).
+cp .env.example .env && $EDITOR .env
+
+# 2. Install Python deps via uv (pyproject.toml).
 uv sync
 
-# Smoke-test connectivity + ST_* / H3 functions on the warehouse
+# 3. Smoke-test connectivity + ST_* / H3 functions on the warehouse.
 uv run catnat probe
 
-# Create catalog/schemas/volume (idempotent)
+# 4. Create catalog/schemas/volume (idempotent).
 uv run catnat setup
 
-# End-to-end: WFS pull → bronze → silver → gold for BRGM RGA
-uv run catnat pipeline rga          # 100-feature sample
+# 5. End-to-end pipelines per peril. WFS pulls are cached in the bronze
+#    raw volume; re-runs are no-ops unless --force or CATNAT_FORCE_FETCH=true.
+uv run catnat pipeline rga          # BRGM clay-shrinkage, 100-feature sample
+uv run catnat pipeline ppri         # PPRI commune footprints (approuv + prescrit)
 uv run catnat pipeline rga --full   # national dataset
 
-# Run any SQL notebook standalone, passing widget params via -p
+# Run any SQL notebook standalone, passing widget params via -p.
 uv run catnat run notebooks/silver/10_rga_susceptibility.sql -p catalog=foo
 ```
 
-Auth uses the `fevm-stable-po64og` Databricks CLI profile by default; override with `CATNAT_PROFILE`, `CATNAT_WAREHOUSE_ID`, or `CATNAT_CATALOG` env vars (see `src/catnat/config.py`).
+Operator parameters live in `.env` (template: `.env.example`). Real env vars
+win over `.env`, so CI can override per-job without touching files. See
+`src/catnat/config.py` for the resolution order.
 
 ## Architecture at a glance
 
@@ -62,18 +77,22 @@ This project relies on open public data — attributions belong in any redistrib
 ```
 SPECS/SPEC.md            ← source of truth: spec, architecture, demo, decisions
 README.md                ← this file
+.env.example             ← copy to .env (gitignored) and edit operator params
 pyproject.toml           ← uv-managed Python project (the `catnat` CLI)
 databricks.yml           ← Databricks Asset Bundle (dev + prod targets)
 src/catnat/              ← Python package powering the `catnat` CLI
   cli.py                 ←   typer entry point
+  config.py              ←   .env + env-var resolution
   sql.py                 ←   notebook splitter + warehouse runner
-  fetch/                 ←   per-source fetchers (RGA today, more coming)
+  fetch/                 ←   per-source fetchers (RGA, PPRI; more coming)
+    base.py              ←     shared cache-check + WFS-to-GeoJSONSeq plumbing
 notebooks/
   _setup/                ←   catalog / schema / volume bootstrap
   bronze/                ←   raw → typed Delta with native GEOMETRY(4326)
-  silver/                ←   geometry repair, labels, centroid H3
+  silver/                ←   geometry validity, date parsing, centroid H3
   gold/                  ←   H3 r=9 polyfill for sub-second point joins
 tests/                   ←   unit tests (no Databricks access required)
+.github/workflows/ci.yml ← lint (ruff) + test (pytest, workspace-free)
 ```
 
 Phase 1+ (`app/`, `mcp/`) will land as the build phases in §7 of the spec are executed.

@@ -101,7 +101,7 @@ All tables in Unity Catalog under `catnat.{bronze,silver,gold}`.
 
 | Table | Source | Grain | Notes |
 |---|---|---|---|
-| `hazard_ppri_flood_zones` | Géorisques (PPRI) | Polygon per zone, per commune | Officially regulated flood zones |
+| `hazard_ppri_communes` | Géorisques WFS (`PPRN_COMMUNE_RISQINOND_APPROUV` + `_PRESCRIT`) | Polygon per commune × PPR status (`approuv` / `prescrit`) | v1: commune-level "is this commune in a PPR Inondation". The detailed in-PPRI zoning (zone rouge / bleue) lives in per-DDT shapefiles outside the WFS and is post-v1. |
 | `hazard_tri_flood` | Géorisques (TRI — Territoires à Risque Important) | Polygon | Modeled flood footprints, 3 return periods |
 | `hazard_rga_susceptibility` | BRGM (Géorisques) | Polygon, 4 levels (faible→fort) | Clay shrinkage exposure |
 | ~~`hazard_storm_footprints`~~ | C3S Windstorm reanalysis (`sis-european-wind-storm-reanalysis`) + ERA5 `fg10` fallback | Polygon per event | **Deferred out of v1** — see §10.6. Storm/tempête peril stays in the narrative but its layer is post-v1. |
@@ -256,6 +256,16 @@ Design rules:
 - **Governance posture:** every chat turn that ran a query is loggable to a UC audit table — sellable as a differentiator vs. shadow-IT QGIS workflows.
 - **Data residency:** all data stays on French / EU soil. Target workspace is **AWS `eu-west-3` (Paris)**; Copernicus / ERA5 sources are staged from the EU mirrors of the AWS Open Data registry to avoid cross-region egress. No data leaves the EU at any stage of the pipeline.
 - **Language convention:** code, SQL, table/column names, MCP tool descriptions, agent system prompt, comments, and docs are all in **English**. The agent renders user-facing responses in the language of the question (French in / French out, English in / English out).
+
+### 8.1 Operational conventions for the ingest pipeline
+
+Three rules govern every fetcher + bronze/silver/gold notebook trio:
+
+1. **Idempotency.** Every notebook uses `CREATE OR REPLACE TABLE` for table writes, `CREATE … IF NOT EXISTS` for namespaces, and parameterized `IDENTIFIER(:catalog || …)` for object names. A re-run on the same inputs produces the same outputs, with no manual cleanup. Bronze tables are append-free — the medallion is a function of the raw volume, not a journal.
+2. **Cache-first downloads.** All upstream pulls (Géorisques WFS, BRGM, IGN, Copernicus) write into the `catnat_bronze.raw` UC volume and check that path before touching the network. The cache key is `{layer}_{full|sample}.geojsonl` under a per-source folder (`raw/rga/…`, `raw/ppri/…`). To force a refresh: `--force` on the CLI or `CATNAT_FORCE_FETCH=true` in the environment. This makes the demo runnable offline once the cache is warm, and makes CI cheap.
+3. **Operator parameters via `.env`.** The four operator-level knobs (`CATNAT_PROFILE`, `CATNAT_WAREHOUSE_ID`, `CATNAT_CATALOG`, `CATNAT_FORCE_FETCH`) load from a `.env` file in the repo root (template committed as `.env.example`, the real `.env` is git-ignored). Real env vars win over `.env` so CI can override per-job without touching files. `src/catnat/config.py` is the single resolution point; nothing else reads these env vars directly.
+
+These conventions stay constant as we add PPRI, TRI, windstorms, climate, and the synthetic portfolio. Each new source ships as `src/catnat/fetch/<peril>.py` + the matching SQL notebook trio, with no plumbing changes.
 
 ---
 

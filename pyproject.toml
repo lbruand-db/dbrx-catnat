@@ -13,6 +13,7 @@ dependencies = [
     "pyogrio>=0.10",
     "geopandas>=1.0",
     "rich>=13",
+    "python-dotenv>=1.0",
 ]
 
 [project.scripts]
