@@ -37,3 +37,14 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# typer's idiomatic API requires calling Argument()/Option() in defaults;
+# B008 ("function call in argument defaults") is the rule that complains.
+"src/catnat/cli.py" = ["B008"]
+
+[tool.pytest.ini_options]
+markers = [
+    "databricks: tests that require a live Databricks workspace connection (excluded in CI)",
+]
+addopts = "--strict-markers"

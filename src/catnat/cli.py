@@ -57,7 +57,9 @@ def probe() -> None:
     for label, sql in checks:
         runner.execute(sql)
         console.print(f"  [green]✓[/green] {label}")
-    console.print(f"\n[bold]Probe OK[/bold] — profile={runner.profile} warehouse={runner.warehouse_id}")
+    console.print(
+        f"\n[bold]Probe OK[/bold] — profile={runner.profile} warehouse={runner.warehouse_id}"
+    )
 
 
 @app.command()
