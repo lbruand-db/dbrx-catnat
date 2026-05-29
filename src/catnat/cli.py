@@ -144,15 +144,21 @@ def fetch_tri(
     full: bool = typer.Option(False, "--full", help="Pull the full national dataset."),
     force: bool = typer.Option(False, "--force", help="Re-download even if cached in the volume."),
 ) -> None:
-    """Pull TRI flood-hazard footprints (11 ALEA_SYNT layers) into a single file."""
+    """Pull TRI flood-hazard footprints (11 ALEA_SYNT layers, one file each)."""
     from catnat.fetch import tri
 
     n_request = None if full else limit
-    remote, n, cached = tri.fetch_and_upload(limit=n_request, force=force)
-    if cached:
-        console.print(f"[bold yellow]cache hit[/bold yellow] (use --force to refresh) — {remote}")
-    else:
-        console.print(f"[bold]✓[/bold] uploaded {n} features → {remote}")
+    results, glob = tri.fetch_and_upload(limit=n_request, force=force)
+    for r in results:
+        tag = f"{r.scenario}_{r.intensity}"
+        if r.skipped:
+            console.print(f"[bold red]skip[/bold red] [{tag}] — {r.error}")
+        elif r.cached:
+            console.print(f"[bold yellow]cache hit[/bold yellow] [{tag}] — {r.remote_path}")
+        else:
+            console.print(f"[bold]✓[/bold] [{tag}] uploaded {r.count} features → {r.remote_path}")
+    n_ok = sum(1 for r in results if not r.skipped)
+    console.print(f"\n[bold]{n_ok}/{len(results)}[/bold] layers ready under {glob}")
 
 
 def _run_stages(
@@ -252,7 +258,12 @@ def pipeline_tri(
     ),
     force: bool = typer.Option(False, "--force", help="Re-download even if cached in the volume."),
 ) -> None:
-    """End-to-end TRI pipeline: fetch (11 ALEA_SYNT layers) → bronze → silver → gold."""
+    """End-to-end TRI pipeline: fetch (11 ALEA_SYNT layers) → bronze → silver → gold.
+
+    Each layer caches in its own file under bronze.raw/tri/; partial fetches
+    (some layers permanently 502'ing) still proceed — bronze reads whatever
+    landed via a glob.
+    """
     from catnat.fetch import tri as tri_fetch
 
     runner = WarehouseRunner()
@@ -260,15 +271,20 @@ def pipeline_tri(
 
     if not skip_fetch:
         n_request = None if full else 30
-        remote, n, cached = tri_fetch.fetch_and_upload(limit=n_request, force=force)
-        if cached:
-            console.print(f"[bold yellow]Fetch[/bold yellow] — cache hit at {remote}")
-        else:
-            console.print(f"[bold]Fetch[/bold] — uploaded {n} features → {remote}")
-        params["input_path"] = remote
+        results, glob = tri_fetch.fetch_and_upload(limit=n_request, force=force)
+        for r in results:
+            tag = f"{r.scenario}_{r.intensity}"
+            if r.skipped:
+                console.print(f"[bold red]Fetch[/bold red] [{tag}] — skipped ({r.error})")
+            elif r.cached:
+                console.print(f"[bold yellow]Fetch[/bold yellow] [{tag}] — cache hit")
+            else:
+                console.print(f"[bold]Fetch[/bold] [{tag}] — {r.count} features")
+        n_ok = sum(1 for r in results if not r.skipped)
+        console.print(f"  {n_ok}/{len(results)} layers ready under {glob}\n")
+        params["input_path"] = glob
     else:
-        suffix = "full" if full else "sample"
-        params["input_path"] = f"{CONFIG.raw_volume_path}/tri/tri_{suffix}.geojsonl"
+        params["input_path"] = tri_fetch.bronze_glob("full" if full else "sample")
 
     stages = [
         ("Setup", NOTEBOOKS_DIR / "_setup" / "00_create_catalog.sql", {}),

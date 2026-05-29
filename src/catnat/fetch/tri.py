@@ -15,13 +15,15 @@ publishes a grid of layers keyed by (return-period scenario × hazard intensity)
     04FAI = Faible    (weak)
 
 Eleven `ALEA_SYNT_<scenario>_<intensity>_FXX` layers cover metropolitan France
-(some scenario × intensity pairs don't exist — e.g. there's no `02_03MCC`).
-The fetcher pulls each, tags each feature with `_scenario_code` /
-`_intensity_code`, concatenates everything into one GeoDataFrame, writes one
-line-delimited GeoJSON. Bronze reads that single file.
+(some scenario × intensity pairs don't exist server-side).
 
-Cache-first: re-runs are no-ops unless `CATNAT_FORCE_FETCH=true` or
-`force=True`.
+**Per-layer caching**: each layer lands in its own
+`tri/tri_<scenario>_<intensity>_<suffix>.geojsonl` file in the bronze raw
+volume. Re-running the fetch only re-pulls layers whose file is missing (or
+when `--force` / `CATNAT_FORCE_FETCH=true`). If a particular layer fails after
+all retries (Géorisques returns persistent 502s for some layers under load),
+we log a warning and skip it — the other ten still land cleanly and bronze
+reads the union via a glob path.
 
 Licence: Etalab 2.0 / Licence Ouverte (Géorisques).
 """
@@ -30,9 +32,9 @@ from __future__ import annotations
 
 import logging
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
-import pandas as pd
 import pyogrio
 
 from catnat.config import CONFIG
@@ -61,43 +63,93 @@ LAYERS: dict[tuple[str, str], str] = {
 }
 
 
-def remote_path(suffix: str) -> str:
-    return f"{CONFIG.raw_volume_path}/tri/tri_{suffix}.geojsonl"
+@dataclass(frozen=True)
+class LayerResult:
+    """Outcome of one layer pull."""
+
+    scenario: str
+    intensity: str
+    remote_path: str | None  # None when skipped
+    count: int  # -1 on cache hit, -2 on skip
+    cached: bool
+    skipped: bool
+    error: str | None = None
 
 
-def _pull_one(layer: str, scenario_code: str, intensity_code: str, limit: int | None):
-    """Pull one ALEA_SYNT layer and tag rows with scenario/intensity codes."""
-    gdf = read_wfs_layer(WFS_URL, layer, limit=limit)
-    gdf["_scenario_code"] = scenario_code
-    gdf["_intensity_code"] = intensity_code
-    return gdf
+def _suffix(limit: int | None) -> str:
+    return "sample" if limit is not None else "full"
+
+
+def remote_path(scenario: str, intensity: str, suffix: str) -> str:
+    return f"{CONFIG.raw_volume_path}/tri/tri_{scenario}_{intensity}_{suffix}.geojsonl"
+
+
+def bronze_glob(suffix: str) -> str:
+    """Glob path the bronze notebook reads — matches every per-layer file."""
+    return f"{CONFIG.raw_volume_path}/tri/tri_*_*_{suffix}.geojsonl"
+
+
+def fetch_layer(
+    scenario: str,
+    intensity: str,
+    limit: int | None,
+    force: bool,
+) -> LayerResult:
+    """Pull one ALEA_SYNT layer to its own GeoJSONSeq file in UC.
+
+    Tags every feature with `_scenario_code` / `_intensity_code` so bronze can
+    parse them as first-class columns without inspecting the file name.
+    """
+    layer = LAYERS[(scenario, intensity)]
+    suffix = _suffix(limit)
+    remote = remote_path(scenario, intensity, suffix)
+
+    if not force and volume_exists(remote):
+        logger.info("tri/%s_%s cache hit at %s", scenario, intensity, remote)
+        return LayerResult(scenario, intensity, remote, -1, cached=True, skipped=False)
+
+    try:
+        gdf = read_wfs_layer(WFS_URL, layer, limit=limit)
+    except Exception as e:
+        # Per-layer skip on persistent failure (typically Géorisques 502 after
+        # all retries). The other layers' files still land and bronze unions
+        # whatever's present.
+        logger.warning(
+            "tri/%s_%s WFS pull failed after retries: %s — skipping",
+            scenario,
+            intensity,
+            e,
+        )
+        return LayerResult(
+            scenario,
+            intensity,
+            None,
+            -2,
+            cached=False,
+            skipped=True,
+            error=str(e),
+        )
+
+    gdf["_scenario_code"] = scenario
+    gdf["_intensity_code"] = intensity
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out = Path(tmpdir) / f"tri_{scenario}_{intensity}_{suffix}.geojsonl"
+        pyogrio.write_dataframe(gdf, out, driver="GeoJSONSeq")
+        upload_to_volume(out, remote)
+    return LayerResult(scenario, intensity, remote, len(gdf), cached=False, skipped=False)
 
 
 def fetch_and_upload(
     limit: int | None = 30,
     force: bool | None = None,
-) -> tuple[str, int, bool]:
-    """Pull all 11 metropolitan TRI layers into one GeoJSONSeq file in UC.
+) -> tuple[list[LayerResult], str]:
+    """Pull all eleven layers, each into its own file.
 
-    Returns (remote_path, count, cached). `count == -1` on a cache hit.
-    `limit` is per-layer; default 30 gives ~330-feature samples across the
-    full scenario × intensity grid.
+    Returns (results_per_layer, glob_path_for_bronze). The glob path is what
+    the bronze notebook should consume via `read_files(:input_path, ...)`.
     """
-    suffix = "sample" if limit is not None else "full"
-    remote = remote_path(suffix)
     should_force = force if force is not None else CONFIG.force_fetch
-    if not should_force and volume_exists(remote):
-        logger.info("tri cache hit at %s", remote)
-        return remote, -1, True
-
-    parts = []
-    for (scenario, intensity), layer in LAYERS.items():
-        logger.info("tri pulling %s (scenario=%s intensity=%s)", layer, scenario, intensity)
-        parts.append(_pull_one(layer, scenario, intensity, limit))
-
-    combined = pd.concat(parts, ignore_index=True)
-    with tempfile.TemporaryDirectory() as tmpdir:
-        out = Path(tmpdir) / f"tri_{suffix}.geojsonl"
-        pyogrio.write_dataframe(combined, out, driver="GeoJSONSeq")
-        upload_to_volume(out, remote)
-    return remote, len(combined), False
+    results: list[LayerResult] = []
+    for scenario, intensity in LAYERS:
+        results.append(fetch_layer(scenario, intensity, limit, should_force))
+    return results, bronze_glob(_suffix(limit))
