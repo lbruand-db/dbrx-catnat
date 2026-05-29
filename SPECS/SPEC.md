@@ -124,6 +124,18 @@ All tables in Unity Catalog under `catnat.{bronze,silver,gold}`.
 - **Resolution 7** (~1.2km edge) for national aggregates and Kepler hex layers.
 - Hazard polygons pre-decomposed to H3 cells in gold for sub-second joins.
 
+### 4.3.1 Workspace constraint — schema-prefix naming
+
+The spec uses logical names like `catnat.bronze.foo`. On the current target workspace (`fevm-stable-po64og`) the user does **not** have `CREATE CATALOG` on the metastore, so we nest under the workspace-default catalog and prefix all schemas with `catnat_`:
+
+| Spec name | Implementation name |
+|---|---|
+| `catnat.bronze.foo` | `serverless_stable_po64og_catalog.catnat_bronze.foo` |
+| `catnat.silver.foo` | `serverless_stable_po64og_catalog.catnat_silver.foo` |
+| `catnat.gold.foo`   | `serverless_stable_po64og_catalog.catnat_gold.foo` |
+
+All bundle variables are parameterized so that on a workspace with metastore-admin privileges we flip the `catalog` variable to `catnat` and the schemas become `catnat.bronze` / `.silver` / `.gold` as originally specified — no code change.
+
 ### 4.4 Upstream loaders we reuse
 
 We don't rewrite ingestion plumbing where a sibling project already does it well.
