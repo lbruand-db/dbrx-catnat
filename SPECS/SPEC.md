@@ -106,7 +106,7 @@ All tables in Unity Catalog under `catnat.{bronze,silver,gold}`.
 | `hazard_rga_susceptibility` | BRGM (Géorisques) | Polygon, 4 levels (faible→fort) | Clay shrinkage exposure |
 | `hazard_storm_footprints` | C3S Windstorm reanalysis (`sis-european-wind-storm-reanalysis`) + ERA5 `fg10` fallback | Polygon per event | Time-stamped; covers Ciarán, Domingos, Eunice. Copernicus licence — redistributable with attribution. |
 | `hazard_climate_rcp` | DRIAS / Copernicus | H3 cell × peril × scenario | RCP 4.5 / 8.5 deltas |
-| `admin_communes` | IGN ADMIN-EXPRESS | Polygon | Reference geography |
+| `admin_communes` + reference layers (buildings, addresses, hydrography, transport) | IGN **BD TOPO v3.5** via [`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks) | 60 layers across 9 INSPIRE themes | Pre-built loader. See §4.4. |
 
 ### 4.2 Portfolio (synthetic for the demo)
 
@@ -123,6 +123,14 @@ All tables in Unity Catalog under `catnat.{bronze,silver,gold}`.
 - **Resolution 9** (~150m edge) for policy points → fast joins to gridded hazard.
 - **Resolution 7** (~1.2km edge) for national aggregates and Kepler hex layers.
 - Hazard polygons pre-decomposed to H3 cells in gold for sub-second joins.
+
+### 4.4 Upstream loaders we reuse
+
+We don't rewrite ingestion plumbing where a sibling project already does it well.
+
+- **[`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks)** — loads **IGN BD TOPO v3.5** (the French national topographic dataset — 60 layers across 9 INSPIRE themes: admin, addresses, buildings, hydrography, land cover, named places, public services, transport, regulated zones) into Unity Catalog Delta tables with native `GEOMETRY(4326)`. Server-side `ST_Transform` from Lambert-93 (EPSG:2154) → WGS84 (EPSG:4326), parallel per-department ingest via `for_each_task`, bilingual (FR/EN) table and column comments from the official IGN data model, deployable from a Databricks Asset Bundle. Replaces the original ADMIN-EXPRESS plan and gives us a much richer reference layer set for free — notably building footprints (useful for policy geocoding) and hydrography (useful as flood-context overlay).
+  - **Integration pattern:** deploy `dbtopo-bricks` to the same workspace as a separate bundle, target its `prod` schema, then have our `catnat.silver.*` layer point at its tables via UC views (no data copy). Our own bundle adds only the CatNat-specific layers (PPRI / TRI / RGA / windstorms / synthetic portfolio).
+  - **Impact on Phase 0:** P0 estimate in §7 drops by ~1 day — no need to write our own IGN ingest.
 
 ---
 
@@ -215,7 +223,7 @@ Design rules:
 
 | Phase | Duration | Deliverable |
 |---|---|---|
-| **P0 — Data foundation** | ~3 days | Bronze ingests (Géorisques PPRI/TRI/RGA, IGN, synthetic portfolio); Silver typing + geometry validity; Gold H3 marts. Notebooks in `notebooks/`. |
+| **P0 — Data foundation** | ~2 days | Bronze ingests (Géorisques PPRI/TRI/RGA, C3S windstorms, synthetic portfolio); Silver typing + geometry validity; Gold H3 marts. IGN reference layers come from [`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks) (see §4.4). Notebooks in `notebooks/`. |
 | **P1 — Spatial SQL layer** | ~1 day | UC views per layer; performance benchmarks (target: <1s for any single-layer point-in-polygon at portfolio scale on a Small SQL WH). |
 | **P2 — Databricks App scaffold** | ~2 days | FastAPI backend + React frontend; Leaflet pane wired to UC via SQL Statement Execution API; Kepler pane with one hard-coded view. |
 | **P3 — MCP server** | ~2 days | Tool implementations against UC; layer allowlist; session-scoped result tables. |
@@ -223,7 +231,7 @@ Design rules:
 | **P5 — Genie integration** | ~1 day | Genie space curated for portfolio Q&A; `ask_genie` tool. |
 | **P6 — Demo polish** | ~2 days | Three act scripts rehearsed; failure-mode fallbacks; one pre-recorded backup. |
 
-**Total:** ~13 working days for one builder; ~7 days with two builders working frontend/backend in parallel.
+**Total:** ~12 working days for one builder; ~6 days with two builders working frontend/backend in parallel.
 
 ---
 
