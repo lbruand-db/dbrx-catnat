@@ -5,9 +5,11 @@ Subcommands:
   catnat setup              Create catalog/schemas/volume (idempotent).
   catnat fetch rga          Pull BRGM RGA polygons from WFS and upload to volume.
   catnat fetch ppri         Pull Géorisques PPRI commune footprints (approuv + prescrit).
+  catnat fetch tri          Pull Géorisques TRI flood-hazard footprints (11 layers).
   catnat run NOTEBOOK_PATH  Execute a SQL notebook against the warehouse.
   catnat pipeline rga       End-to-end: fetch → bronze → silver → gold (RGA).
   catnat pipeline ppri      End-to-end: fetch → bronze → silver → gold (PPRI).
+  catnat pipeline tri       End-to-end: fetch → bronze → silver → gold (TRI).
 """
 
 from __future__ import annotations
@@ -134,6 +136,25 @@ def fetch_ppri(
             console.print(f"[bold]✓[/bold] [{status}] uploaded {n} features → {remote}")
 
 
+@fetch_app.command("tri")
+def fetch_tri(
+    limit: int = typer.Option(
+        30, "--limit", help="Per-layer feature cap (11 layers). Use --full for everything."
+    ),
+    full: bool = typer.Option(False, "--full", help="Pull the full national dataset."),
+    force: bool = typer.Option(False, "--force", help="Re-download even if cached in the volume."),
+) -> None:
+    """Pull TRI flood-hazard footprints (11 ALEA_SYNT layers) into a single file."""
+    from catnat.fetch import tri
+
+    n_request = None if full else limit
+    remote, n, cached = tri.fetch_and_upload(limit=n_request, force=force)
+    if cached:
+        console.print(f"[bold yellow]cache hit[/bold yellow] (use --force to refresh) — {remote}")
+    else:
+        console.print(f"[bold]✓[/bold] uploaded {n} features → {remote}")
+
+
 def _run_stages(
     runner: WarehouseRunner,
     params: dict[str, str],
@@ -219,5 +240,40 @@ def pipeline_ppri(
         ("Bronze", NOTEBOOKS_DIR / "bronze" / "20_ppri_communes.sql", {}),
         ("Silver", NOTEBOOKS_DIR / "silver" / "20_ppri_communes.sql", {}),
         ("Gold", NOTEBOOKS_DIR / "gold" / "20_ppri_communes_h3.sql", {"resolution": "9"}),
+    ]
+    _run_stages(runner, params, stages)
+
+
+@pipeline_app.command("tri")
+def pipeline_tri(
+    full: bool = typer.Option(False, "--full", help="Pull the full national dataset."),
+    skip_fetch: bool = typer.Option(
+        False, "--skip-fetch", help="Skip the WFS pull entirely; reuse what's in the volume."
+    ),
+    force: bool = typer.Option(False, "--force", help="Re-download even if cached in the volume."),
+) -> None:
+    """End-to-end TRI pipeline: fetch (11 ALEA_SYNT layers) → bronze → silver → gold."""
+    from catnat.fetch import tri as tri_fetch
+
+    runner = WarehouseRunner()
+    params = _params_default()
+
+    if not skip_fetch:
+        n_request = None if full else 30
+        remote, n, cached = tri_fetch.fetch_and_upload(limit=n_request, force=force)
+        if cached:
+            console.print(f"[bold yellow]Fetch[/bold yellow] — cache hit at {remote}")
+        else:
+            console.print(f"[bold]Fetch[/bold] — uploaded {n} features → {remote}")
+        params["input_path"] = remote
+    else:
+        suffix = "full" if full else "sample"
+        params["input_path"] = f"{CONFIG.raw_volume_path}/tri/tri_{suffix}.geojsonl"
+
+    stages = [
+        ("Setup", NOTEBOOKS_DIR / "_setup" / "00_create_catalog.sql", {}),
+        ("Bronze", NOTEBOOKS_DIR / "bronze" / "30_tri_flood.sql", {}),
+        ("Silver", NOTEBOOKS_DIR / "silver" / "30_tri_flood.sql", {}),
+        ("Gold", NOTEBOOKS_DIR / "gold" / "30_tri_flood_h3.sql", {"resolution": "9"}),
     ]
     _run_stages(runner, params, stages)

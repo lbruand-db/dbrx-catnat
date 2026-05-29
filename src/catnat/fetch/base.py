@@ -14,6 +14,7 @@ volume and `CATNAT_FORCE_FETCH` is unset/false, we skip the network call.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 import pyogrio
@@ -23,6 +24,16 @@ from databricks.sdk.errors import NotFound
 from catnat.config import CONFIG
 
 logger = logging.getLogger(__name__)
+
+# Géorisques WFS returns transient 502s when hammered with sequential pulls.
+# Retry with exponential backoff before giving up.
+_RETRY_ATTEMPTS = 4
+_RETRY_INITIAL_DELAY = 2.0
+
+
+def _is_transient_wfs_error(err: Exception) -> bool:
+    msg = str(err).lower()
+    return "502" in msg or "503" in msg or "timeout" in msg or "connection reset" in msg
 
 
 def workspace_client() -> WorkspaceClient:
@@ -39,6 +50,35 @@ def volume_exists(remote_path: str, client: WorkspaceClient | None = None) -> bo
         return False
 
 
+def read_wfs_layer(wfs_url: str, layer: str, limit: int | None = None):
+    """Pull a WFS layer to a GeoDataFrame, retrying transient 502s.
+
+    Géorisques returns short-lived 502s under sequential load, so we wrap the
+    pyogrio call in exponential backoff before giving up.
+    """
+    src = f"WFS:{wfs_url}"
+    kwargs: dict[str, object] = {"layer": layer}
+    if limit is not None:
+        kwargs["max_features"] = limit
+    delay = _RETRY_INITIAL_DELAY
+    for attempt in range(1, _RETRY_ATTEMPTS + 1):
+        try:
+            return pyogrio.read_dataframe(src, **kwargs)
+        except Exception as e:
+            if attempt == _RETRY_ATTEMPTS or not _is_transient_wfs_error(e):
+                raise
+            logger.warning(
+                "WFS pull %s attempt %d/%d failed (%s); retrying in %.1fs",
+                layer,
+                attempt,
+                _RETRY_ATTEMPTS,
+                e,
+                delay,
+            )
+            time.sleep(delay)
+            delay *= 2
+
+
 def wfs_to_geojsonseq(
     wfs_url: str,
     layer: str,
@@ -50,11 +90,7 @@ def wfs_to_geojsonseq(
 
     Returns the number of features written.
     """
-    src = f"WFS:{wfs_url}"
-    kwargs: dict[str, object] = {"layer": layer}
-    if limit is not None:
-        kwargs["max_features"] = limit
-    gdf = pyogrio.read_dataframe(src, **kwargs)
+    gdf = read_wfs_layer(wfs_url, layer, limit=limit)
     for col in drop_columns:
         if col in gdf.columns:
             gdf = gdf.drop(columns=[col])

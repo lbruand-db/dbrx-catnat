@@ -102,7 +102,7 @@ All tables in Unity Catalog under `catnat.{bronze,silver,gold}`.
 | Table | Source | Grain | Notes |
 |---|---|---|---|
 | `hazard_ppri_communes` | Géorisques WFS (`PPRN_COMMUNE_RISQINOND_APPROUV` + `_PRESCRIT`) | Polygon per commune × PPR status (`approuv` / `prescrit`) | v1: commune-level "is this commune in a PPR Inondation". The detailed in-PPRI zoning (zone rouge / bleue) lives in per-DDT shapefiles outside the WFS and is post-v1. |
-| `hazard_tri_flood` | Géorisques (TRI — Territoires à Risque Important) | Polygon | Modeled flood footprints, 3 return periods |
+| `hazard_tri_flood` | Géorisques WFS — 11 `ALEA_SYNT_<scenario>_<intensity>_FXX` layers | Polygon per TRI × scenario × intensity × flood-type | EU Floods Directive hazard maps. Three scenarios (`01` fréquent, `02` moyen, `03` extrême) × four intensities (`01FOR` fort, `02MOY` moyen, `03MCC`, `04FAI` faible) — the WFS exposes 11 cells of the 3×4 grid. Flood types: `01` débordement, `02` submersion marine, `03` ruissellement. |
 | `hazard_rga_susceptibility` | BRGM (Géorisques) | Polygon, 4 levels (faible→fort) | Clay shrinkage exposure |
 | ~~`hazard_storm_footprints`~~ | C3S Windstorm reanalysis (`sis-european-wind-storm-reanalysis`) + ERA5 `fg10` fallback | Polygon per event | **Deferred out of v1** — see §10.6. Storm/tempête peril stays in the narrative but its layer is post-v1. |
 | `hazard_climate_rcp` | DRIAS / Copernicus | H3 cell × peril × scenario | RCP 4.5 / 8.5 deltas |

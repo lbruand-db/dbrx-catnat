@@ -17,7 +17,7 @@ Covers the three perils that dominate the French CatNat loss ratio: **inondation
 
 ## Status
 
-**Phase 0 — Data foundation: in progress.** The BRGM RGA (clay-shrinkage) and Géorisques PPRI (flood, commune-level) layers are ingested end-to-end (bronze → silver → gold) on the `fevm-stable-po64og` workspace. TRI flood footprints and the IGN BD TOPO reference layers (via [`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks)) are the next bronze drops. C3S windstorms are deferred out of v1.
+**Phase 0 — Data foundation: in progress.** Three flood/drought layers are ingested end-to-end (bronze → silver → gold) on the `fevm-stable-po64og` workspace: BRGM RGA (clay-shrinkage), Géorisques PPRI (commune-level flood-prevention status), and Géorisques TRI (EU Floods Directive hazard maps — 11 scenario × intensity cells). The IGN BD TOPO reference layers (via [`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks)) are next. C3S windstorms are deferred out of v1.
 
 See [`SPECS/SPEC.md`](SPECS/SPEC.md) for the detailed build spec — narrative, architecture, data model, MCP tool surface, demo script, build phases, decisions, and the operational conventions in §8.1 (idempotency, cache-first downloads, `.env` parameters).
 
@@ -40,6 +40,7 @@ uv run catnat setup
 #    raw volume; re-runs are no-ops unless --force or CATNAT_FORCE_FETCH=true.
 uv run catnat pipeline rga          # BRGM clay-shrinkage, 100-feature sample
 uv run catnat pipeline ppri         # PPRI commune footprints (approuv + prescrit)
+uv run catnat pipeline tri          # TRI hazard maps, 11 layers (scenario × intensity)
 uv run catnat pipeline rga --full   # national dataset
 
 # Run any SQL notebook standalone, passing widget params via -p.
