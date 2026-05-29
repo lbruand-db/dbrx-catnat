@@ -1,23 +1,29 @@
 """DuckDB-based local execution for Databricks SQL notebooks.
 
-Lets us unit-test the silver/gold transformation logic without burning warehouse
-cycles. The translation is hybrid:
+Translation is a thin sandwich around **sqlglot**:
 
-1. **Regex pre-processing** strips Databricks-only constructs that have no
-   DuckDB equivalent (`TBLPROPERTIES`, `OPTIMIZE … ZORDER BY`,
-   `ALTER TABLE … COMMENT`, table-level `COMMENT '…'` after `CREATE TABLE`).
-2. **`IDENTIFIER(:catalog || '.schema.table')`** is unwrapped — DuckDB doesn't
-   have IDENTIFIER, and we don't carry a top-level catalog in tests.
-3. **`:param` markers** are substituted with literal values (quoted strings).
-4. **H3 function rewrites** account for the Databricks ↔ DuckDB API gap:
-   - `h3_longlatash3(lon, lat, res)` → `h3_latlng_to_cell(lat, lon, res)`
-   - `h3_polyfillash3(ST_AsBinary(geom), res)` → `h3_polygon_wkt_to_cells(ST_AsText(geom), res)`
-5. **`LATERAL VIEW explode(arr) AS x`** → `, UNNEST(arr) AS t(x)`.
+1. A single regex pre-pass unwraps `IDENTIFIER(:catalog || '.schema.table')`
+   to a bare `schema.table` reference. sqlglot's Databricks parser doesn't
+   accept `IDENTIFIER(...)` in DDL positions (e.g. after `CREATE TABLE`), so
+   we resolve it before parsing.
+2. `sqlglot.parse_one(sql, dialect="databricks")` lifts the rest into an AST.
+3. AST transforms handle the four function-level gaps that sqlglot doesn't
+   know about by default:
+   - `h3_longlatash3(lon, lat, r)` → `h3_latlng_to_cell(lat, lon, r)`
+   - `h3_polyfillash3(ST_AsBinary(g), r)` → `h3_polygon_wkt_to_cells(ST_AsText(g), r)`
+   - `TRY_TO_DATE(s, 'dd-MM-yyyy')` → `CAST(try_strptime(s, '%d-%m-%Y') AS DATE)`
+   - `:param` markers (sqlglot `Placeholder` nodes) → SQL literals.
+4. `tree.sql(dialect="duckdb")` serialises back out. This is where sqlglot
+   contributes most of the value for free:
+   - `LATERAL VIEW explode(arr) AS x` → `CROSS JOIN UNNEST(arr) AS _t0(x)`
+   - `get_json_object(j, '$.p')` → `j ->> '$.p'`
+   - `CREATE OR REPLACE TABLE … COMMENT '…' TBLPROPERTIES (…)` → comments
+     and TBLPROPERTIES dropped.
+   - General syntax/dialect adjustments (CAST, identifier quoting).
 
-The notebooks themselves are untouched — translation happens at run time.
-
-The runner reuses `catnat.sql.iter_statements` (same notebook splitter as the
-Databricks runner), so cell semantics stay consistent across engines.
+Statement-level skips (`OPTIMIZE … ZORDER BY`, `ALTER TABLE … COMMENT`) are
+filtered before parsing because they're cosmetic / Delta-only and sqlglot
+serialises them back as DuckDB-rejecting strings.
 """
 
 from __future__ import annotations
@@ -27,195 +33,137 @@ import re
 from pathlib import Path
 
 import duckdb
+import sqlglot
+from sqlglot import exp
 
 from catnat.sql import Statement, iter_statements
 
 logger = logging.getLogger(__name__)
 
 
-# --- pre-processing -----------------------------------------------------------
+# --- pre-pass: IDENTIFIER(:catalog || '.schema.table') → schema.table ---------
 
-# `TBLPROPERTIES ( … )` — Databricks-only metadata. Strip outright.
-_RE_TBLPROPERTIES = re.compile(r"\bTBLPROPERTIES\s*\([^)]*\)", re.IGNORECASE | re.DOTALL)
-# Table-level `COMMENT 'text'` immediately after CREATE TABLE.
-# We don't enforce a strict grammar; we just remove any standalone COMMENT '…'
-# that's not part of an ALTER (which we'll strip wholesale).
-_RE_TABLE_COMMENT = re.compile(r"\bCOMMENT\s+'(?:[^'\\]|\\.)*'", re.IGNORECASE | re.DOTALL)
-# IDENTIFIER(:catalog || '.schema.table') → schema.table
 _RE_IDENTIFIER = re.compile(
     r"IDENTIFIER\(\s*:(\w+)\s*\|\|\s*'\.(?P<rest>[\w\.]+)'\s*\)",
     re.IGNORECASE,
 )
-# Bare IDENTIFIER(:catalog) → no-op for our test schemas (used by the setup
-# notebook's information_schema lookup, which we don't run).
 _RE_IDENTIFIER_BARE = re.compile(r"IDENTIFIER\(\s*:(\w+)\s*\)", re.IGNORECASE)
 
 
-def _strip_databricks_only(sql: str) -> str:
-    """Remove constructs DuckDB doesn't understand."""
-    sql = _RE_TBLPROPERTIES.sub("", sql)
-    sql = _RE_TABLE_COMMENT.sub("", sql)
-    return sql
-
-
 def _unwrap_identifier(sql: str, params: dict[str, str]) -> str:
-    """Replace IDENTIFIER(:catalog || '.schema.table') with schema.table.
+    """Resolve the Databricks `IDENTIFIER(...)` dynamic-name function.
 
-    Drops the catalog level: DuckDB tests run in a single in-memory database
+    `IDENTIFIER(:catalog || '.schema.table')` → `schema.table`. The catalog
+    level is dropped: our DuckDB tests live in a single in-memory database
     where the schema is the top-level namespace.
+
+    Done as a regex pre-pass because sqlglot's parser rejects `IDENTIFIER(...)`
+    in DDL positions (e.g. `CREATE TABLE IDENTIFIER(...)`).
     """
-
-    def repl(m: re.Match[str]) -> str:
-        # Just take what's after the catalog dot (schema.table).
-        return m.group("rest")
-
-    sql = _RE_IDENTIFIER.sub(repl, sql)
+    sql = _RE_IDENTIFIER.sub(lambda m: m.group("rest"), sql)
     # Bare IDENTIFIER(:catalog) — substitute the catalog literally for cases
-    # like `information_schema` qualifiers. Quote if needed.
+    # like `information_schema` qualifiers (used by the setup notebook, which
+    # we don't run in DuckDB tests but keep working for completeness).
     sql = _RE_IDENTIFIER_BARE.sub(lambda m: params.get(m.group(1), "memory"), sql)
     return sql
 
 
-def _substitute_params(sql: str, params: dict[str, str]) -> str:
-    """Replace remaining `:param` markers with quoted SQL string literals.
+# --- AST transforms -----------------------------------------------------------
 
-    Numeric-looking values get unquoted so `CAST(:resolution AS INT)` works.
-    """
-    for name, value in params.items():
-        literal = value if value.isdigit() else f"'{value}'"
-        sql = re.sub(rf":\b{name}\b", literal, sql)
-    return sql
-
-
-# --- function rewrites --------------------------------------------------------
-
-_RE_H3_LONGLATASH3 = re.compile(
-    r"\bh3_longlatash3\s*\(\s*([^,]+?)\s*,\s*([^,]+?)\s*,\s*([^)]+?)\s*\)",
-    re.IGNORECASE,
-)
-_RE_H3_POLYFILL_WKB = re.compile(
-    r"\bh3_polyfillash3\s*\(\s*ST_AsBinary\s*\(\s*([^)]+?)\s*\)\s*,\s*([^)]+?)\s*\)",
-    re.IGNORECASE,
-)
-_RE_LATERAL_VIEW_HEAD = re.compile(
-    r"\bLATERAL\s+VIEW\s+(?:OUTER\s+)?explode\s*\(",
-    re.IGNORECASE,
-)
-_RE_TRY_TO_DATE = re.compile(
-    r"\bTRY_TO_DATE\s*\(\s*([^,()]+(?:\([^)]*\))?)\s*,\s*'([^']+)'\s*\)",
-    re.IGNORECASE,
+_DATE_FORMAT_TOKENS = (
+    ("yyyy", "%Y"),
+    ("yy", "%y"),
+    ("MM", "%m"),
+    ("dd", "%d"),
+    ("HH", "%H"),
+    ("mm", "%M"),
+    ("ss", "%S"),
 )
 
 
 def _spark_to_strptime_format(fmt: str) -> str:
     """Convert Spark date-format tokens to DuckDB strptime tokens.
 
-    Only handles the tokens we use today (yyyy, MM, dd). Add more as we hit them.
+    Token order matters: replace longer tokens first so `yyyy` doesn't get
+    chopped by the `yy` pass.
     """
-    return (
-        fmt.replace("yyyy", "%Y")
-        .replace("yy", "%y")
-        .replace("MM", "%m")
-        .replace("dd", "%d")
-        .replace("HH", "%H")
-        .replace("mm", "%M")
-        .replace("ss", "%S")
-    )
+    for spark, strp in _DATE_FORMAT_TOKENS:
+        fmt = fmt.replace(spark, strp)
+    return fmt
 
 
-def _extract_balanced(sql: str, open_idx: int) -> int:
-    """Return the index of the `)` that closes the `(` at `open_idx`.
+def _func_name(node: exp.Anonymous) -> str:
+    """Lowercase function name of an `Anonymous` node, robust to None."""
+    name = node.this
+    return (name or "").lower() if isinstance(name, str) else str(name).lower()
 
-    Handles nested parentheses; assumes the source doesn't embed unbalanced
-    parens inside string literals (true for our notebooks).
+
+def _substitute_placeholders(params: dict[str, str]):
+    """Pre-pass: replace `:name` markers with SQL literals.
+
+    Runs before function rewrites so the rewrites can copy already-substituted
+    arg subtrees without re-running into placeholders. (sqlglot's `transform`
+    visits pre-order and stops descending into a replacement node.)
     """
-    depth = 0
-    for i in range(open_idx, len(sql)):
-        c = sql[i]
-        if c == "(":
-            depth += 1
-        elif c == ")":
-            depth -= 1
-            if depth == 0:
-                return i
-    raise ValueError(f"unbalanced parens starting at {open_idx}")
+
+    def visit(node: exp.Expression) -> exp.Expression:
+        if isinstance(node, exp.Placeholder):
+            raw_name = node.this
+            name = raw_name if isinstance(raw_name, str) else getattr(raw_name, "this", None)
+            if name and name in params:
+                value = params[name]
+                return exp.Literal.number(value) if value.isdigit() else exp.Literal.string(value)
+        return node
+
+    return visit
 
 
-def _rewrite_lateral_view_explode(sql: str) -> str:
-    """`LATERAL VIEW explode(<expr>) AS <name>` → `, UNNEST(<expr>) AS t(<name>)`.
+def _rewrite_functions(node: exp.Expression) -> exp.Expression:
+    """Function-level Databricks→DuckDB rewrites that sqlglot doesn't do by default."""
+    # h3_longlatash3(lon, lat, r) → h3_latlng_to_cell(lat, lon, r)
+    if isinstance(node, exp.Anonymous) and _func_name(node) == "h3_longlatash3":
+        args = node.expressions
+        if len(args) == 3:
+            return exp.Anonymous(
+                this="h3_latlng_to_cell",
+                expressions=[args[1].copy(), args[0].copy(), args[2].copy()],
+            )
 
-    `<expr>` can contain nested parens (function calls), which a regex alone
-    can't handle, so we find the matching `)` ourselves and then look for the
-    `AS <name>` suffix.
-    """
-    out = []
-    i = 0
-    while True:
-        m = _RE_LATERAL_VIEW_HEAD.search(sql, i)
-        if not m:
-            out.append(sql[i:])
-            break
-        out.append(sql[i : m.start()])
-        # Position of the opening `(` of explode(...).
-        open_paren = m.end() - 1
-        close_paren = _extract_balanced(sql, open_paren)
-        inner = sql[open_paren + 1 : close_paren]
-        # Look ahead for AS <name>.
-        tail = sql[close_paren + 1 :]
-        as_match = re.match(r"\s+AS\s+(\w+)", tail, re.IGNORECASE)
-        if not as_match:
-            raise ValueError("LATERAL VIEW explode without `AS <name>`")
-        col = as_match.group(1)
-        out.append(f", UNNEST({inner.strip()}) AS t({col})")
-        i = close_paren + 1 + as_match.end()
-    return "".join(out)
-
-
-def _rewrite_try_to_date(sql: str) -> str:
-    """`TRY_TO_DATE(expr, 'dd-MM-yyyy')` → `try_strptime(expr, '%d-%m-%Y')::DATE`."""
-
-    def repl(m: re.Match[str]) -> str:
-        expr = m.group(1).strip()
-        fmt = _spark_to_strptime_format(m.group(2))
-        return f"try_strptime({expr}, '{fmt}')::DATE"
-
-    return _RE_TRY_TO_DATE.sub(repl, sql)
-
-
-def _rewrite_functions(sql: str) -> str:
-    """Map Databricks H3 + Spark-only constructs to DuckDB equivalents."""
-    # Argument-order swap: Databricks (lon, lat, res) → DuckDB (lat, lon, res).
-    sql = _RE_H3_LONGLATASH3.sub(r"h3_latlng_to_cell(\2, \1, \3)", sql)
     # h3_polyfillash3(ST_AsBinary(g), r) → h3_polygon_wkt_to_cells(ST_AsText(g), r)
-    sql = _RE_H3_POLYFILL_WKB.sub(r"h3_polygon_wkt_to_cells(ST_AsText(\1), \2)", sql)
-    # TRY_TO_DATE(expr, 'dd-MM-yyyy') → try_strptime(expr, '%d-%m-%Y')::DATE
-    sql = _rewrite_try_to_date(sql)
-    # LATERAL VIEW explode(arr) AS col → , UNNEST(arr) AS t(col) — balanced.
-    sql = _rewrite_lateral_view_explode(sql)
-    return sql
+    if isinstance(node, exp.Anonymous) and _func_name(node) == "h3_polyfillash3":
+        args = node.expressions
+        if len(args) == 2:
+            first = args[0]
+            if isinstance(first, exp.Anonymous) and _func_name(first) == "st_asbinary":
+                wkt = exp.Anonymous(
+                    this="ST_AsText", expressions=[e.copy() for e in first.expressions]
+                )
+            else:
+                wkt = exp.Anonymous(this="ST_AsText", expressions=[first.copy()])
+            return exp.Anonymous(this="h3_polygon_wkt_to_cells", expressions=[wkt, args[1].copy()])
+
+    # TRY_TO_DATE(s, 'fmt') → CAST(try_strptime(s, '%-fmt') AS DATE)
+    if isinstance(node, exp.Anonymous) and _func_name(node) == "try_to_date":
+        args = node.expressions
+        if len(args) == 2 and isinstance(args[1], exp.Literal) and args[1].is_string:
+            fmt = _spark_to_strptime_format(args[1].this)
+            strptime = exp.Anonymous(
+                this="try_strptime", expressions=[args[0].copy(), exp.Literal.string(fmt)]
+            )
+            return exp.Cast(this=strptime, to=exp.DataType.build("date"))
+
+    return node
 
 
-def translate(sql: str, params: dict[str, str]) -> str:
-    """Translate one statement from Databricks SQL to DuckDB-runnable SQL."""
-    sql = _strip_databricks_only(sql)
-    sql = _unwrap_identifier(sql, params)
-    sql = _substitute_params(sql, params)
-    sql = _rewrite_functions(sql)
-    return sql
-
-
-# --- runner -------------------------------------------------------------------
+# --- statement-level skips ---------------------------------------------------
 
 
 def is_skippable(stmt_text: str) -> bool:
-    """Drop statements that have no DuckDB analog and don't affect results.
+    """Cells with no DuckDB analog that don't affect data.
 
-    Currently: standalone `ALTER TABLE … COMMENT …` and `OPTIMIZE … ZORDER BY …`.
-    Comments are cosmetic; ZORDER is a Delta optimization step. Both are no-ops
-    for the data shape we test against.
-
-    Comment-only lines at the head of the cell are stripped before the prefix
-    check so a `-- ZORDER for fast joins\\nOPTIMIZE …` cell still skips.
+    `ALTER TABLE … COMMENT '…'` and `OPTIMIZE … ZORDER BY (…)` are cosmetic /
+    Delta-only. We strip leading comment-only lines before the prefix check so
+    a `-- doc\\nOPTIMIZE …` cell still skips.
     """
     head = ""
     for line in stmt_text.splitlines():
@@ -225,6 +173,27 @@ def is_skippable(stmt_text: str) -> bool:
         head = stripped.upper()
         break
     return head.startswith(("ALTER TABLE", "OPTIMIZE"))
+
+
+# --- public translate + runner -----------------------------------------------
+
+
+def translate(sql: str, params: dict[str, str]) -> str:
+    """Translate one Databricks-dialect statement to DuckDB-runnable SQL."""
+    if not sql.strip():
+        return sql
+    pre = _unwrap_identifier(sql, params)
+    try:
+        tree = sqlglot.parse_one(pre, dialect="databricks")
+    except sqlglot.errors.ParseError as e:
+        raise RuntimeError(f"sqlglot could not parse Databricks SQL:\n{pre}\n{e}") from e
+    if tree is None:
+        return pre
+    # Two-pass transform: placeholders first (so function-rewrite arg copies
+    # carry the literal values), then function rewrites.
+    tree = tree.transform(_substitute_placeholders(params))
+    tree = tree.transform(_rewrite_functions)
+    return tree.sql(dialect="duckdb")
 
 
 class DuckRunner:
@@ -250,8 +219,7 @@ class DuckRunner:
         for stmt in iter_statements(path.read_text(encoding="utf-8")):
             if is_skippable(stmt.text):
                 continue
-            translated = translate(stmt.text, params)
-            translated = translated.strip()
+            translated = translate(stmt.text, params).strip()
             if not translated:
                 continue
             try:

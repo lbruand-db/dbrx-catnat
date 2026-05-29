@@ -260,18 +260,27 @@ Design rules:
 ### 8.1 Testability — silver + gold notebooks run on DuckDB
 
 Every silver and gold notebook is exercised in CI against an in-memory
-**DuckDB** session (spatial + h3 community extensions) using a sqlglot-style
-translation shim (`src/catnat/duck.py`). The notebooks are not duplicated —
-we transform the same `.sql` files at runtime:
+**DuckDB** session (spatial + h3 community extensions). The notebooks are not
+duplicated — `src/catnat/duck.py` translates them at runtime using
+**[sqlglot](https://github.com/tobymao/sqlglot)** as the spine, with targeted
+AST-level patches for the four function-level gaps sqlglot doesn't know about:
 
-- `IDENTIFIER(:catalog || '.schema.table')` is unwrapped to `schema.table`.
-- `:param` markers get substituted with quoted SQL literals.
-- `h3_longlatash3(lon, lat, r)` → `h3_latlng_to_cell(lat, lon, r)` (arg swap).
-- `h3_polyfillash3(ST_AsBinary(geom), r)` → `h3_polygon_wkt_to_cells(ST_AsText(geom), r)`.
-- `TRY_TO_DATE(s, 'dd-MM-yyyy')` → `try_strptime(s, '%d-%m-%Y')::DATE`.
-- `LATERAL VIEW explode(arr) AS x` → `, UNNEST(arr) AS t(x)` (nested-paren-aware).
-- `TBLPROPERTIES`, table-level `COMMENT 'text'`, `ALTER TABLE … COMMENT`, and
-  `OPTIMIZE … ZORDER BY …` are dropped — cosmetic / Delta-only.
+| Construct | Owner |
+|---|---|
+| `LATERAL VIEW explode(arr) AS x` → `CROSS JOIN UNNEST(arr) AS _t(x)` | sqlglot (databricks → duckdb dialect transpile) |
+| `get_json_object(j, '$.p')` → `j ->> '$.p'` | sqlglot |
+| `CREATE OR REPLACE TABLE … COMMENT '…' TBLPROPERTIES (…) AS …` (strips comments + properties) | sqlglot |
+| `IDENTIFIER(:catalog \|\| '.schema.table')` → `schema.table` | regex pre-pass (sqlglot's parser rejects `IDENTIFIER(...)` in DDL positions) |
+| `:param` → SQL literal | AST transform on `Placeholder` nodes |
+| `h3_longlatash3(lon, lat, r)` → `h3_latlng_to_cell(lat, lon, r)` (arg swap) | AST transform on `Anonymous` |
+| `h3_polyfillash3(ST_AsBinary(g), r)` → `h3_polygon_wkt_to_cells(ST_AsText(g), r)` | AST transform on `Anonymous` |
+| `TRY_TO_DATE(s, 'dd-MM-yyyy')` → `CAST(try_strptime(s, '%d-%m-%Y') AS DATE)` | AST transform on `Anonymous` |
+| `OPTIMIZE … ZORDER BY` / `ALTER TABLE … COMMENT` | cell-level skip (cosmetic / Delta-only) |
+
+The two AST passes run in order — `Placeholder` substitution first, then
+function rewrites — so the function rewrites can copy already-substituted
+subtrees without colliding with sqlglot's pre-order walk semantics
+(replacement subtrees aren't re-visited).
 
 Tests live in `tests/test_*_duckdb.py`: synthetic bronze rows are seeded
 directly, silver + gold notebooks run against them, assertions cover label

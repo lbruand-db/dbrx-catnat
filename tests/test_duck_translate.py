@@ -26,30 +26,35 @@ def test_param_substitution_quotes_strings_not_numbers() -> None:
 
 def test_h3_longlatash3_argument_swap() -> None:
     sql = "SELECT h3_longlatash3(2.35, 48.85, 9)"
-    out = translate(sql, {})
-    # Lat first in DuckDB.
-    assert "h3_latlng_to_cell(48.85, 2.35, 9)" in out
+    out = translate(sql, {}).upper()
+    # Lat first in DuckDB; sqlglot uppercases anonymous function names on emit.
+    assert "H3_LATLNG_TO_CELL(48.85, 2.35, 9)" in out
 
 
 def test_h3_polyfillash3_to_wkt() -> None:
     sql = "SELECT h3_polyfillash3(ST_AsBinary(geometry), 9)"
-    out = translate(sql, {})
-    assert "h3_polygon_wkt_to_cells(ST_AsText(geometry), 9)" in out
+    out = translate(sql, {}).upper()
+    assert "H3_POLYGON_WKT_TO_CELLS(ST_ASTEXT(GEOMETRY), 9)" in out
 
 
 def test_try_to_date_to_strptime() -> None:
     sql = "SELECT TRY_TO_DATE(d, 'dd-MM-yyyy')"
     out = translate(sql, {})
-    assert "try_strptime(d, '%d-%m-%Y')::DATE" in out
+    # sqlglot serialises Cast in `CAST(... AS DATE)` form (not the ::DATE
+    # shorthand) and keeps the format string verbatim.
+    assert "TRY_STRPTIME(d, '%d-%m-%Y')" in out
+    assert "AS DATE" in out.upper()
+    assert "CAST" in out.upper()
 
 
 def test_lateral_view_explode_with_nested_parens() -> None:
-    sql = "FROM t LATERAL VIEW explode(h3_polyfillash3(ST_AsBinary(g), 9)) AS cell"
+    sql = "SELECT cell FROM t LATERAL VIEW explode(h3_polyfillash3(ST_AsBinary(g), 9)) AS cell"
     out = translate(sql, {})
-    # Nested-paren-aware splitter must produce a clean UNNEST.
+    # sqlglot translates LATERAL VIEW → CROSS JOIN UNNEST with an auto-aliased
+    # table; we just check the shape and that nested-paren content survived.
     assert "LATERAL VIEW" not in out
     assert "UNNEST" in out
-    assert "AS t(cell)" in out
+    assert "(cell)" in out  # the inner column name carries through
 
 
 def test_tblproperties_stripped() -> None:
