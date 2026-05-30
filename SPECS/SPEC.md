@@ -260,7 +260,8 @@ Design rules:
 
 | Phase | Duration | Deliverable |
 |---|---|---|
-| **P0 — Data foundation** | ~2 days | Bronze ingests (Géorisques PPRI/TRI/RGA, C3S windstorms, synthetic portfolio); Silver typing + geometry validity; Gold H3 marts. IGN reference layers come from [`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks) (see §4.4). Notebooks in `notebooks/`. |
+| **P0 — Data foundation** ✅ | ~2 days | Bronze ingests (Géorisques PPRI/TRI/RGA); Silver typing + geometry validity; Gold H3 marts. IGN reference layers come from [`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks) (see §4.4). Storm footprints deferred (§10.6); synthetic portfolio bumped to **P0.5**. **Retrospective**: [`SPECS/PHASE_0_RETROSPECTIVE.md`](PHASE_0_RETROSPECTIVE.md) — what shipped, decisions made, gotchas we tripped on, sample queries. |
+| **P0.5 — Synthetic portfolio** | ~0.5 day | `portfolio_policies` / `portfolio_claims` / `events` weighted by `admin_communes.population`, H3-indexed at r=9. Last data-foundation item before P1. |
 | **P1 — Spatial SQL layer** | ~1 day | UC views per layer; performance benchmarks (target: <1s for any single-layer point-in-polygon at portfolio scale on a Small SQL WH). |
 | **P2 — Databricks App scaffold** | ~2 days | FastAPI backend + React frontend; Leaflet pane wired to UC via SQL Statement Execution API; Kepler pane with one hard-coded view. |
 | **P3 — MCP server** | ~2 days | Tool implementations against UC; layer allowlist; session-scoped result tables. |
@@ -268,7 +269,7 @@ Design rules:
 | **P5 — Genie integration** | ~1 day | Genie space curated for portfolio Q&A; `ask_genie` tool. |
 | **P6 — Demo polish** | ~2 days | Three act scripts rehearsed; failure-mode fallbacks; one pre-recorded backup. |
 
-**Total:** ~12 working days for one builder; ~6 days with two builders working frontend/backend in parallel.
+**Total:** ~12 working days for one builder; ~6 days with two builders working frontend/backend in parallel. P0 closed at end of 2026-05-30 — see [retro](PHASE_0_RETROSPECTIVE.md).
 
 ---
 

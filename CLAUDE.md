@@ -11,10 +11,16 @@ the three CatNat perils (flood, drought, storm). Phase 0 (data foundation) is
 in progress; the eventual demo is an "agentic GIS" with Leaflet + Kepler.gl
 panes driven by an MCP-backed LLM agent over Unity Catalog data.
 
-We are currently at: **3 hazard layers + 1 reference layer wired**
-(RGA / PPRI / TRI / IGN BD TOPO communes for département 069 Rhône, via
-[`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks)). Windstorms
-are deferred out of v1.
+**Phase 0 closed** at end of 2026-05-30 — see
+[`SPECS/PHASE_0_RETROSPECTIVE.md`](SPECS/PHASE_0_RETROSPECTIVE.md) for the
+end-state metrics, decisions, and gotchas. We have **3 hazard layers + 1
+reference layer wired**: RGA, PPRI, TRI, IGN BD TOPO communes (dept 069
+Rhône, via [`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks)).
+Windstorms are deferred (SPEC §10.6); synthetic portfolio is Phase 0.5.
+
+Runnable sample queries showing the cross-layer H3 join pattern live in
+[`notebooks/queries/`](notebooks/queries/) — start there to get a feel for
+the medallion before touching code.
 
 ## How to work in this repo
 
