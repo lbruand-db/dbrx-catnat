@@ -22,6 +22,11 @@ variables:
       dataset). Drives both the fetcher arguments and the bronze input-path
       suffix.
     default: sample
+  ign_schema:
+    description: |
+      Schema where the sibling dbtopo-bricks bundle lands its commune_dedup
+      table. The catnat_ign job creates UC views in catnat_silver over this.
+    default: ign_bdtopo
 
 artifacts:
   catnat_wheel:

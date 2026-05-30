@@ -140,9 +140,30 @@ All bundle variables are parameterized so that on a workspace with metastore-adm
 
 We don't rewrite ingestion plumbing where a sibling project already does it well.
 
-- **[`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks)** — loads **IGN BD TOPO v3.5** (the French national topographic dataset — 60 layers across 9 INSPIRE themes: admin, addresses, buildings, hydrography, land cover, named places, public services, transport, regulated zones) into Unity Catalog Delta tables with native `GEOMETRY(4326)`. Server-side `ST_Transform` from Lambert-93 (EPSG:2154) → WGS84 (EPSG:4326), parallel per-department ingest via `for_each_task`, bilingual (FR/EN) table and column comments from the official IGN data model, deployable from a Databricks Asset Bundle. Replaces the original ADMIN-EXPRESS plan and gives us a much richer reference layer set for free — notably building footprints (useful for policy geocoding) and hydrography (useful as flood-context overlay).
-  - **Integration pattern:** deploy `dbtopo-bricks` to the same workspace as a separate bundle, target its `prod` schema, then have our `catnat.silver.*` layer point at its tables via UC views (no data copy). Our own bundle adds only the CatNat-specific layers (PPRI / TRI / RGA / windstorms / synthetic portfolio).
-  - **Impact on Phase 0:** P0 estimate in §7 drops by ~1 day — no need to write our own IGN ingest.
+- **[`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks)** — loads **IGN BD TOPO v3.5** (the French national topographic dataset — 60 layers across 9 INSPIRE themes: admin, addresses, buildings, hydrography, land cover, named places, public services, transport, regulated zones) into Unity Catalog Delta tables with native `GEOMETRY(4326)`. Server-side `ST_Transform` from Lambert-93 (EPSG:2154) → WGS84 (EPSG:4326), parallel per-department ingest via `for_each_task`, bilingual (FR/EN) table and column comments from the official IGN data model, deployable from a Databricks Asset Bundle.
+
+  **Integration pattern**: deploy `dbtopo-bricks` to the same workspace as a sibling bundle. Our `catnat_silver.admin_communes` is a **UC view** over `<catalog>.<ign_schema>.commune_dedup` — no data copy, lineage links cleanly back. The catnat bundle adds only the CatNat-specific layers (PPRI / TRI / RGA / synthetic portfolio).
+
+  **v1 scope**: just `commune_dedup` exposed as `catnat_silver.admin_communes` (+ a gold H3 r=9 mart for fast point-in-commune joins). Buildings, addresses, hydrography stay one hop away in the source schema and we'll layer them in as the demo narrative needs them.
+
+  **Department scope for the demo**: **Rhône (`069`)** for v1 — it gives us Lyon, the Rhône + Saône rivers (flood context), the `FRE_TRI_LYON` TRI footprint we already ingested, and ~290 communes. Wide enough to demonstrate the lineage, narrow enough to deploy fast (~5–10 min per dept per the dbtopo-bricks README).
+
+  **Deployment recipe** (one-time, from the sibling `dbtopo-bricks/` clone):
+  ```bash
+  # Add a local-only target to dbtopo-bricks/databricks.yml:
+  #   dbrx_catnat:
+  #     workspace: { host: <our-workspace>, profile: <our-profile> }
+  #     variables:
+  #       catalog: serverless_stable_po64og_catalog
+  #       schema:  ign_bdtopo
+  #       departments_json: '["069"]'
+  databricks bundle deploy -t dbrx_catnat
+  databricks bundle run bdtopo_load -t dbrx_catnat
+  # Then, back in dbrx-catnat:
+  uv run catnat pipeline ign      # or `databricks bundle run catnat_ign`
+  ```
+
+  **Impact on Phase 0**: P0 estimate in §7 drops by ~1 day — no own-IGN-ingest to write.
 
 ---
 

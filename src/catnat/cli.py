@@ -10,6 +10,8 @@ Subcommands:
   catnat pipeline rga       End-to-end: fetch → bronze → silver → gold (RGA).
   catnat pipeline ppri      End-to-end: fetch → bronze → silver → gold (PPRI).
   catnat pipeline tri       End-to-end: fetch → bronze → silver → gold (TRI).
+  catnat pipeline ign       Silver+gold views over dbtopo-bricks IGN tables
+                            (no fetch — dbtopo-bricks is deployed separately).
 """
 
 from __future__ import annotations
@@ -311,5 +313,29 @@ def pipeline_tri(
         ("Bronze", NOTEBOOKS_DIR / "bronze" / "30_tri_flood.sql", {}),
         ("Silver", NOTEBOOKS_DIR / "silver" / "30_tri_flood.sql", {}),
         ("Gold", NOTEBOOKS_DIR / "gold" / "30_tri_flood_h3.sql", {"resolution": "9"}),
+    ]
+    _run_stages(runner, params, stages)
+
+
+@pipeline_app.command("ign")
+def pipeline_ign(
+    ign_schema: str = typer.Option(
+        "ign_bdtopo",
+        "--ign-schema",
+        help="Schema where dbtopo-bricks landed its commune_dedup table.",
+    ),
+) -> None:
+    """Silver+gold views over the dbtopo-bricks IGN tables.
+
+    No fetch step — dbtopo-bricks runs as its own bundle. This pipeline
+    assumes `<catalog>.<ign_schema>.commune_dedup` already exists.
+    """
+    runner = WarehouseRunner()
+    params = {**_params_default(), "ign_schema": ign_schema}
+
+    stages = [
+        ("Setup", NOTEBOOKS_DIR / "_setup" / "00_create_catalog.sql", {}),
+        ("Silver", NOTEBOOKS_DIR / "silver" / "40_ign_communes.sql", {}),
+        ("Gold", NOTEBOOKS_DIR / "gold" / "40_ign_communes_h3.sql", {"resolution": "9"}),
     ]
     _run_stages(runner, params, stages)

@@ -11,9 +11,10 @@ the three CatNat perils (flood, drought, storm). Phase 0 (data foundation) is
 in progress; the eventual demo is an "agentic GIS" with Leaflet + Kepler.gl
 panes driven by an MCP-backed LLM agent over Unity Catalog data.
 
-We are currently at: **3 of 4 hazard layers ingested end-to-end** (RGA, PPRI,
-TRI). IGN reference layers via [`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks)
-are the next bronze drop. Windstorms are deferred out of v1.
+We are currently at: **3 hazard layers + 1 reference layer wired**
+(RGA / PPRI / TRI / IGN BD TOPO communes for département 069 Rhône, via
+[`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks)). Windstorms
+are deferred out of v1.
 
 ## How to work in this repo
 
@@ -62,10 +63,11 @@ DAB jobs are the deployable shape (SPEC §8 NFR).
 - **`tests/test_sql.py`** — notebook splitter / cell parsing.
 - **`tests/test_duck_translate.py`** — pure unit tests on the
   Databricks→DuckDB translation shim (`src/catnat/duck.py`).
-- **`tests/test_{silver,gold}_{rga,ppri,tri}_duckdb.py`** — full silver +
-  gold notebook runs against in-memory DuckDB (spatial + h3 community
-  extensions). Synthetic bronze seeded directly via SQL; assertions cover
-  label mapping, date parsing, geometry validity, H3 polyfill output.
+- **`tests/test_{silver,gold}_{rga,ppri,tri,ign}_duckdb.py`** — full silver
+  + gold notebook runs against in-memory DuckDB (spatial + h3 community
+  extensions). Synthetic bronze (or dbtopo-bricks-shaped input for IGN)
+  seeded directly via SQL; assertions cover label mapping, date parsing,
+  geometry validity, view projection, H3 polyfill output.
 
 Adding a new layer? Mirror the pattern:
 1. `src/catnat/fetch/<peril>.py` for the WFS pull.

@@ -41,31 +41,43 @@ from catnat.sql import Statement, iter_statements
 logger = logging.getLogger(__name__)
 
 
-# --- pre-pass: IDENTIFIER(:catalog || '.schema.table') → schema.table ---------
+# --- pre-pass: IDENTIFIER(:catalog || …) → schema.table -----------------------
 
-_RE_IDENTIFIER = re.compile(
-    r"IDENTIFIER\(\s*:(\w+)\s*\|\|\s*'\.(?P<rest>[\w\.]+)'\s*\)",
-    re.IGNORECASE,
-)
-_RE_IDENTIFIER_BARE = re.compile(r"IDENTIFIER\(\s*:(\w+)\s*\)", re.IGNORECASE)
+# Match the entire IDENTIFIER(...) call. The body is a chain of `||`-joined
+# pieces — `:param` markers and/or single-quoted string literals. We resolve
+# the whole expression to a plain identifier (`schema.table` or `schema`),
+# dropping the catalog level since DuckDB tests live in one in-memory database.
+_RE_IDENTIFIER_CALL = re.compile(r"IDENTIFIER\(\s*([^)]+?)\s*\)", re.IGNORECASE)
+_RE_PARAM = re.compile(r":(\w+)")
+
+
+def _eval_identifier_body(body: str, params: dict[str, str]) -> str:
+    """Evaluate a `||`-joined chain of `:param` / `'literal'` into a string.
+
+    Drops the catalog level: everything before the first `.` is discarded.
+    For bare `IDENTIFIER(:catalog)` (no `||`), the param is returned verbatim
+    so qualifiers like `information_schema` work.
+    """
+    parts: list[str] = []
+    for piece in (p.strip() for p in body.split("||")):
+        if piece.startswith(":"):
+            name = piece[1:]
+            parts.append(params.get(name, name))
+        elif piece.startswith("'") and piece.endswith("'"):
+            parts.append(piece[1:-1])
+        else:
+            parts.append(piece)
+    full = "".join(parts)
+    return full.split(".", 1)[1] if "." in full else full
 
 
 def _unwrap_identifier(sql: str, params: dict[str, str]) -> str:
-    """Resolve the Databricks `IDENTIFIER(...)` dynamic-name function.
-
-    `IDENTIFIER(:catalog || '.schema.table')` → `schema.table`. The catalog
-    level is dropped: our DuckDB tests live in a single in-memory database
-    where the schema is the top-level namespace.
+    """Resolve `IDENTIFIER(:catalog || '.foo' || ... || '.bar')` to `foo.bar`.
 
     Done as a regex pre-pass because sqlglot's parser rejects `IDENTIFIER(...)`
     in DDL positions (e.g. `CREATE TABLE IDENTIFIER(...)`).
     """
-    sql = _RE_IDENTIFIER.sub(lambda m: m.group("rest"), sql)
-    # Bare IDENTIFIER(:catalog) — substitute the catalog literally for cases
-    # like `information_schema` qualifiers (used by the setup notebook, which
-    # we don't run in DuckDB tests but keep working for completeness).
-    sql = _RE_IDENTIFIER_BARE.sub(lambda m: params.get(m.group(1), "memory"), sql)
-    return sql
+    return _RE_IDENTIFIER_CALL.sub(lambda m: _eval_identifier_body(m.group(1), params), sql)
 
 
 # --- AST transforms -----------------------------------------------------------

@@ -173,3 +173,31 @@ resources:
               - geopandas
               - pyogrio
               - shapely
+
+    # IGN reference job — no fetch task. Assumes dbtopo-bricks has been
+    # deployed and run separately against the same catalog. See SPEC §4.4.
+    catnat_ign:
+      name: catnat-ign-${bundle.target}
+      tasks:
+        - task_key: setup
+          notebook_task:
+            notebook_path: ../notebooks/_setup/00_create_catalog.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              catalog: ${var.catalog}
+        - task_key: silver_ign
+          depends_on: [{ task_key: setup }]
+          notebook_task:
+            notebook_path: ../notebooks/silver/40_ign_communes.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              catalog: ${var.catalog}
+              ign_schema: ${var.ign_schema}
+        - task_key: gold_ign
+          depends_on: [{ task_key: silver_ign }]
+          notebook_task:
+            notebook_path: ../notebooks/gold/40_ign_communes_h3.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              catalog: ${var.catalog}
+              resolution: "9"
