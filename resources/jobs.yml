@@ -193,6 +193,7 @@ resources:
             base_parameters:
               catalog: ${var.catalog}
               ign_schema: ${var.ign_schema}
+              ign_table_prefix: ${var.ign_table_prefix}
         - task_key: gold_ign
           depends_on: [{ task_key: silver_ign }]
           notebook_task:

@@ -17,22 +17,23 @@ _SEED = """
 CREATE SCHEMA IF NOT EXISTS ign_bdtopo;
 CREATE SCHEMA IF NOT EXISTS catnat_silver;
 
-CREATE OR REPLACE TABLE ign_bdtopo.commune_dedup AS
+CREATE OR REPLACE TABLE ign_bdtopo.ign_bdtopo_commune_dedup AS
 SELECT
   cleabs, code_insee, code_insee_du_departement, code_insee_de_la_region,
-  nom_officiel, nom_usuel, population::INT AS population, dept,
+  code_postal, nom_officiel, population::INT AS population,
+  superficie_cadastrale::INT AS superficie_cadastrale, code_siren, dept,
   ST_GeomFromText(wkt) AS geometry
 FROM (VALUES
-  ('COMMUNE_00001', '69123', '069', '84', 'Lyon',           'Lyon',           513275, '069',
+  ('COMMUNE_00001', '69123', '069', '84', '69001', 'Lyon',          513275,  4787, '216900514', '069',
    'POLYGON((4.80 45.71, 4.90 45.71, 4.90 45.79, 4.80 45.79, 4.80 45.71))'),
-  ('COMMUNE_00002', '69266', '069', '84', 'Villeurbanne',   'Villeurbanne',   154848, '069',
+  ('COMMUNE_00002', '69266', '069', '84', '69100', 'Villeurbanne',  154848,  1448, '216902668', '069',
    'POLYGON((4.88 45.76, 4.92 45.76, 4.92 45.78, 4.88 45.78, 4.88 45.76))'),
-  ('COMMUNE_00003', '69244', '069', '84', 'Saint-Priest',   'Saint-Priest',    45995, '069',
+  ('COMMUNE_00003', '69244', '069', '84', '69800', 'Saint-Priest',   45995,  2954, '216902444', '069',
    'POLYGON((4.93 45.69, 4.97 45.69, 4.97 45.73, 4.93 45.73, 4.93 45.69))'),
-  ('COMMUNE_00099', '69ZZZ', '069', '84', 'Empty commune',  'Empty',               0, '069',
+  ('COMMUNE_00099', '69ZZZ', '069', '84', '00000', 'Empty commune',      0,     0, '000000000', '069',
    'POLYGON EMPTY')
 ) AS t(cleabs, code_insee, code_insee_du_departement, code_insee_de_la_region,
-       nom_officiel, nom_usuel, population, dept, wkt);
+       code_postal, nom_officiel, population, superficie_cadastrale, code_siren, dept, wkt);
 """
 
 
@@ -42,7 +43,11 @@ def test_silver_ign_projects_columns_and_filters_empty(
     runner.execute(_SEED)
     runner.run_notebook(
         notebooks_dir / "silver" / "40_ign_communes.sql",
-        params={"catalog": "memory", "ign_schema": "ign_bdtopo"},
+        params={
+            "catalog": "memory",
+            "ign_schema": "ign_bdtopo",
+            "ign_table_prefix": "ign_bdtopo_",
+        },
     )
 
     # 1. Empty geometry dropped; 3 remain.
@@ -63,11 +68,11 @@ def test_silver_ign_projects_columns_and_filters_empty(
 
     # 3. Lyon's commune has the expected attributes.
     lyon = runner.query("""
-        SELECT code_insee, nom_officiel, population, code_dep
+        SELECT code_insee, nom_officiel, population, code_dep, code_postal
         FROM catnat_silver.admin_communes
         WHERE cleabs = 'COMMUNE_00001'
     """)
-    assert lyon == [("69123", "Lyon", 513275, "069")]
+    assert lyon == [("69123", "Lyon", 513275, "069", "69001")]
 
     # 4. Every surviving row has a non-null centroid H3 r=7.
     h3 = runner.query(

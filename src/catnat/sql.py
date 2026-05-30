@@ -30,6 +30,36 @@ from catnat.config import CONFIG
 _CELL_MARKER = re.compile(r"^-- COMMAND ----------\s*$", re.MULTILINE)
 _WIDGET = re.compile(r"^\s*CREATE\s+WIDGET\b.*$", re.IGNORECASE | re.MULTILINE)
 _MAGIC = re.compile(r"^\s*-- MAGIC\b.*$", re.MULTILINE)
+_RE_IDENTIFIER_CALL = re.compile(r"IDENTIFIER\(\s*([^)]+?)\s*\)", re.IGNORECASE)
+
+
+def _resolve_identifier_call(body: str, params: dict[str, str]) -> str:
+    """Resolve `:p || '.x' || :q || '.y'` into a literal `<catalog>.x.<q>.y`.
+
+    Used to pre-substitute `IDENTIFIER(...)` arguments before sending SQL to
+    the warehouse. The Databricks SQL engine accepts parameter markers in most
+    contexts but rejects them inside `CREATE VIEW … AS …` (see SQLSTATE 0A000
+    `PARAMETER_MARKER_IN_UNEXPECTED_STATEMENT`). Pre-resolving keeps the
+    notebooks consistent across SELECT / CREATE TABLE / CREATE VIEW.
+    """
+    parts: list[str] = []
+    for piece in (p.strip() for p in body.split("||")):
+        if piece.startswith(":"):
+            parts.append(params.get(piece[1:], piece))
+        elif piece.startswith("'") and piece.endswith("'"):
+            parts.append(piece[1:-1])
+        else:
+            parts.append(piece)
+    return "".join(parts)
+
+
+def resolve_identifiers(sql: str, params: dict[str, str]) -> str:
+    """Substitute `IDENTIFIER(...)` calls with literal qualified names.
+
+    Other `:param` markers are left alone — the Statement Execution API
+    resolves them via the `parameters` payload.
+    """
+    return _RE_IDENTIFIER_CALL.sub(lambda m: _resolve_identifier_call(m.group(1), params), sql)
 
 
 @dataclass(frozen=True)
@@ -114,6 +144,12 @@ class WarehouseRunner:
         statement: str,
         parameters: dict[str, str] | None = None,
     ) -> StatementResponse:
+        # Pre-resolve `IDENTIFIER(:foo || '.bar')` calls to literal names. The
+        # Statement Execution API accepts parameter markers for SELECT/CREATE
+        # TABLE but rejects them inside `CREATE VIEW … AS …` (SQLSTATE 0A000).
+        # Doing the substitution here keeps notebooks uniform across contexts.
+        if parameters:
+            statement = resolve_identifiers(statement, parameters)
         params: list[StatementParameterListItem] | None = None
         if parameters:
             params = [

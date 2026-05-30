@@ -27,6 +27,11 @@ variables:
       Schema where the sibling dbtopo-bricks bundle lands its commune_dedup
       table. The catnat_ign job creates UC views in catnat_silver over this.
     default: ign_bdtopo
+  ign_table_prefix:
+    description: |
+      Prefix dbtopo-bricks puts on layer tables — matches its `table_prefix`
+      argument, which defaults to the schema name + underscore.
+    default: ign_bdtopo_
 
 artifacts:
   catnat_wheel:

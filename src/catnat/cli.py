@@ -322,16 +322,28 @@ def pipeline_ign(
     ign_schema: str = typer.Option(
         "ign_bdtopo",
         "--ign-schema",
-        help="Schema where dbtopo-bricks landed its commune_dedup table.",
+        help="Schema where dbtopo-bricks landed its tables.",
+    ),
+    ign_table_prefix: str = typer.Option(
+        "ign_bdtopo_",
+        "--ign-table-prefix",
+        help=(
+            "Prefix dbtopo-bricks puts on layer tables — matches its `table_prefix` "
+            "argument, which defaults to the schema name + underscore."
+        ),
     ),
 ) -> None:
     """Silver+gold views over the dbtopo-bricks IGN tables.
 
     No fetch step — dbtopo-bricks runs as its own bundle. This pipeline
-    assumes `<catalog>.<ign_schema>.commune_dedup` already exists.
+    assumes `<catalog>.<ign_schema>.<ign_table_prefix>commune_dedup` exists.
     """
     runner = WarehouseRunner()
-    params = {**_params_default(), "ign_schema": ign_schema}
+    params = {
+        **_params_default(),
+        "ign_schema": ign_schema,
+        "ign_table_prefix": ign_table_prefix,
+    }
 
     stages = [
         ("Setup", NOTEBOOKS_DIR / "_setup" / "00_create_catalog.sql", {}),

@@ -146,9 +146,13 @@ We don't rewrite ingestion plumbing where a sibling project already does it well
 
   **v1 scope**: just `commune_dedup` exposed as `catnat_silver.admin_communes` (+ a gold H3 r=9 mart for fast point-in-commune joins). Buildings, addresses, hydrography stay one hop away in the source schema and we'll layer them in as the demo narrative needs them.
 
-  **Department scope for the demo**: **Rhône (`069`)** for v1 — it gives us Lyon, the Rhône + Saône rivers (flood context), the `FRE_TRI_LYON` TRI footprint we already ingested, and ~290 communes. Wide enough to demonstrate the lineage, narrow enough to deploy fast (~5–10 min per dept per the dbtopo-bricks README).
+  **Department scope for the demo**: **Rhône (`069`)** for v1 — Lyon + Rhône/Saône rivers (flood context) + the `FRE_TRI_LYON` TRI footprint we already ingested. The GPKG for dept 069 actually pulls in **496 communes across 5 départements** (69 + neighbours that overlap on commune borders), totalling ~2.4M people; the `_dedup` step keeps one row per `cleabs`. The gold H3 r=9 mart materialises to ~60k cells.
 
-  **Deployment recipe** (one-time, from the sibling `dbtopo-bricks/` clone):
+  **Table-prefix caveat**: dbtopo-bricks defaults its `table_prefix` to the schema name, so the actual table is `<catalog>.ign_bdtopo.ign_bdtopo_commune_dedup` (prefix doubled). Our `catnat pipeline ign` exposes `--ign-table-prefix` (default `ign_bdtopo_`) to track this without having to edit dbtopo-bricks.
+
+  **OOM heuristic** (sent upstream as [PR draft] `feat/per-layer-batch-size-heuristic`): GPKG files are SQLite, so we probe the geometry-blob sizes via `MAX(LENGTH(geom))` *before* reading the layer (BLOB length is in row headers, not in payload — fast) and size the Spark write batch against the worst single row. Replaces a hardcoded `LARGE_GEOMETRY_DEPTS` allowlist with per-layer adaptive sizing. Without this, dept 069's `cours_d_eau` (river polygons) OOMs the serverless executor (1 GB limit) on the default 5000-row batches.
+
+  **Deployment recipe** (one-time, from the sibling `dbtopo-bricks/` clone, on the `feat/per-layer-batch-size-heuristic` branch until merged):
   ```bash
   # Add a local-only target to dbtopo-bricks/databricks.yml:
   #   dbrx_catnat:
@@ -158,7 +162,7 @@ We don't rewrite ingestion plumbing where a sibling project already does it well
   #       schema:  ign_bdtopo
   #       departments_json: '["069"]'
   databricks bundle deploy -t dbrx_catnat
-  databricks bundle run bdtopo_load -t dbrx_catnat
+  databricks bundle run bdtopo_load -t dbrx_catnat   # ~24 min for dept 069
   # Then, back in dbrx-catnat:
   uv run catnat pipeline ign      # or `databricks bundle run catnat_ign`
   ```

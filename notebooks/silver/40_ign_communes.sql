@@ -22,21 +22,23 @@
 -- COMMAND ----------
 
 CREATE OR REPLACE VIEW IDENTIFIER(:catalog || '.catnat_silver.admin_communes')
-  COMMENT 'Silver: IGN BD TOPO communes, sourced from dbtopo-bricks.commune_dedup. Licence Ouverte 2.0 (IGN).'
+  COMMENT 'Silver: IGN BD TOPO communes, sourced from dbtopo-bricks commune_dedup. Licence Ouverte 2.0 (IGN).'
 AS
 SELECT
   cleabs,
   code_insee,
   code_insee_du_departement                                AS code_dep,
   code_insee_de_la_region                                  AS code_reg,
+  code_postal,
   nom_officiel,
-  nom_usuel,
   population,
+  superficie_cadastrale,
+  code_siren,
   dept,
   geometry,
   h3_longlatash3(ST_X(ST_Centroid(geometry)),
                  ST_Y(ST_Centroid(geometry)), 7)           AS centroid_h3_r7
-FROM IDENTIFIER(:catalog || '.' || :ign_schema || '.commune_dedup')
+FROM IDENTIFIER(:catalog || '.' || :ign_schema || '.' || :ign_table_prefix || 'commune_dedup')
 WHERE ST_IsValid(geometry)
   AND NOT ST_IsEmpty(geometry);
 
