@@ -12,6 +12,8 @@ Subcommands:
   catnat pipeline tri       End-to-end: fetch → bronze → silver → gold (TRI).
   catnat pipeline ign       Silver+gold views over dbtopo-bricks IGN tables
                             (no fetch — dbtopo-bricks is deployed separately).
+  catnat pipeline portfolio Synthetic portfolio (policies + events) + gold rollup.
+                            Pure SQL, no upstream fetch. Requires IGN.
 """
 
 from __future__ import annotations
@@ -349,5 +351,37 @@ def pipeline_ign(
         ("Setup", NOTEBOOKS_DIR / "_setup" / "00_create_catalog.sql", {}),
         ("Silver", NOTEBOOKS_DIR / "silver" / "40_ign_communes.sql", {}),
         ("Gold", NOTEBOOKS_DIR / "gold" / "40_ign_communes_h3.sql", {"resolution": "9"}),
+    ]
+    _run_stages(runner, params, stages)
+
+
+@pipeline_app.command("portfolio")
+def pipeline_portfolio(
+    n_policies: int = typer.Option(
+        5000,
+        "--n-policies",
+        "-n",
+        help="Number of synthetic policies to generate (sample mode default).",
+    ),
+    full: bool = typer.Option(
+        False, "--full", help="Use the demo's target portfolio size (500k policies)."
+    ),
+) -> None:
+    """Generate the synthetic portfolio (policies + events) + gold rollup.
+
+    Pure SQL, no fetch step. Requires `catnat_silver.admin_communes` (and its
+    gold polyfill) to be populated — run `catnat pipeline ign` first.
+    """
+    runner = WarehouseRunner()
+    params = {
+        **_params_default(),
+        "n_policies": str(500_000 if full else n_policies),
+    }
+
+    stages = [
+        ("Setup", NOTEBOOKS_DIR / "_setup" / "00_create_catalog.sql", {}),
+        ("Silver-policies", NOTEBOOKS_DIR / "silver" / "50_portfolio_policies.sql", {}),
+        ("Silver-events", NOTEBOOKS_DIR / "silver" / "51_portfolio_events.sql", {}),
+        ("Gold-policies-h3", NOTEBOOKS_DIR / "gold" / "50_portfolio_policies_h3.sql", {}),
     ]
     _run_stages(runner, params, stages)

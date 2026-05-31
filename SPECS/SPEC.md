@@ -112,11 +112,14 @@ All tables in Unity Catalog under `catnat.{bronze,silver,gold}`.
 
 | Table | Grain | Notes |
 |---|---|---|
-| `portfolio_policies` | One row per policy | Address, geocoded lat/lon, H3 (r=9), insured value, peril coverage |
-| `portfolio_claims` | One row per claim | Linked to policy + event, opened/closed dates, paid amount |
-| `events` | One row per CatNat event | Type, declared date, JO publication, affected communes |
+| `catnat_silver.portfolio_policies` | One row per policy | Population-weighted random H3 r=9 placement on `admin_communes`. Log-normal `insured_value_eur` (~250 k median, 50 k–5 M clip). Boolean `coverage_{flood,rga,storm}` (~85 % / 95 % / 60 %). Random `policy_start_date` in the last 5 years. |
+| `catnat_silver.events` | One row per CatNat event | Hand-seeded list of 6 recent events (Ciarán, Domingos, Eunice, Alex/Vésubie, Gard 2002, RGA 2022 drought) with `event_type`, `event_date`, `jo_publication_date`, `affected_depts`. |
+| `catnat_gold.portfolio_policies_h3` | One row per `(h3, code_dep)` | Per-cell rollup: `n_policies`, `sum_insured_value_eur`, per-peril counts and per-peril insured totals. ZORDER on `h3`. Joins to every hazard gold via a single equi-join. |
+| `catnat_silver.portfolio_claims` | (Phase 1) | Linked to `policy_id` + `event_id` once the demo flow needs Act 2 claims-triage queries. |
 
-**Why synthetic:** real insurer portfolios are not available in time and not needed for the narrative. We generate ~500k policies weighted by INSEE population density and a few "hot" zones (Vaucluse / Gard for flood, Île-de-France for RGA) so the heatmaps tell a story.
+**Why synthetic:** real insurer portfolios aren't available in time and not needed for the narrative. The generator is **pure SQL** — `silver/50_portfolio_policies.sql` reads `admin_communes` + `admin_communes_h3`, computes a per-commune policy quota proportional to population, expands via `posexplode(sequence(…))`, and joins each policy to a random H3 cell from its commune. Idempotent (`CREATE OR REPLACE TABLE`), runs in seconds against the Small Serverless SQL Warehouse.
+
+**Sample vs. full**: `--n-policies 5000` (default) for inner-loop work; `--full` targets the spec's 500 k for the demo-size run. Geographic distribution comes for free from the IGN footprint — load more départements (via `dbtopo-bricks`) and the portfolio expands automatically.
 
 ### 4.3 H3 indexing convention
 
@@ -261,7 +264,7 @@ Design rules:
 | Phase | Duration | Deliverable |
 |---|---|---|
 | **P0 — Data foundation** ✅ | ~2 days | Bronze ingests (Géorisques PPRI/TRI/RGA); Silver typing + geometry validity; Gold H3 marts. IGN reference layers come from [`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks) (see §4.4). Storm footprints deferred (§10.6); synthetic portfolio bumped to **P0.5**. **Retrospective**: [`SPECS/PHASE_0_RETROSPECTIVE.md`](PHASE_0_RETROSPECTIVE.md) — what shipped, decisions made, gotchas we tripped on, sample queries. |
-| **P0.5 — Synthetic portfolio** | ~0.5 day | `portfolio_policies` / `portfolio_claims` / `events` weighted by `admin_communes.population`, H3-indexed at r=9. Last data-foundation item before P1. |
+| **P0.5 — Synthetic portfolio** ✅ | ~0.5 day | `portfolio_policies` (~5k sample / 500k full) weighted by `admin_communes.population`, H3-indexed at r=9 + per-cell gold rollup. Hand-seeded `events` table (6 recent CatNat events). `portfolio_claims` deferred to P1 — needs event-specific overlap logic. New sample query `06_portfolio_rga_exposure.sql` demonstrates the portfolio × hazard equi-join. |
 | **P1 — Spatial SQL layer** | ~1 day | UC views per layer; performance benchmarks (target: <1s for any single-layer point-in-polygon at portfolio scale on a Small SQL WH). |
 | **P2 — Databricks App scaffold** | ~2 days | FastAPI backend + React frontend; Leaflet pane wired to UC via SQL Statement Execution API; Kepler pane with one hard-coded view. |
 | **P3 — MCP server** | ~2 days | Tool implementations against UC; layer allowlist; session-scoped result tables. |

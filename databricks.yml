@@ -32,6 +32,11 @@ variables:
       Prefix dbtopo-bricks puts on layer tables — matches its `table_prefix`
       argument, which defaults to the schema name + underscore.
     default: ign_bdtopo_
+  n_policies:
+    description: |
+      Target row count for the synthetic portfolio (`catnat_portfolio` job).
+      Sample default 5000; flip to 500000 for the demo-size run.
+    default: "5000"
 
 artifacts:
   catnat_wheel:

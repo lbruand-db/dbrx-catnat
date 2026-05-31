@@ -202,3 +202,37 @@ resources:
             base_parameters:
               catalog: ${var.catalog}
               resolution: "9"
+
+    # Synthetic portfolio job — no fetch task, pure SQL. Depends on
+    # catnat_silver.admin_communes (run catnat_ign first).
+    catnat_portfolio:
+      name: catnat-portfolio-${bundle.target}
+      tasks:
+        - task_key: setup
+          notebook_task:
+            notebook_path: ../notebooks/_setup/00_create_catalog.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              catalog: ${var.catalog}
+        - task_key: silver_policies
+          depends_on: [{ task_key: setup }]
+          notebook_task:
+            notebook_path: ../notebooks/silver/50_portfolio_policies.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              catalog: ${var.catalog}
+              n_policies: ${var.n_policies}
+        - task_key: silver_events
+          depends_on: [{ task_key: setup }]
+          notebook_task:
+            notebook_path: ../notebooks/silver/51_portfolio_events.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              catalog: ${var.catalog}
+        - task_key: gold_policies_h3
+          depends_on: [{ task_key: silver_policies }]
+          notebook_task:
+            notebook_path: ../notebooks/gold/50_portfolio_policies_h3.sql
+            warehouse_id: ${var.warehouse_id}
+            base_parameters:
+              catalog: ${var.catalog}
