@@ -11,14 +11,21 @@ the three CatNat perils (flood, drought, storm). Phase 0 (data foundation) is
 in progress; the eventual demo is an "agentic GIS" with Leaflet + Kepler.gl
 panes driven by an MCP-backed LLM agent over Unity Catalog data.
 
-**Phases 0 and 0.5 closed** — see
+**Phases 0, 0.5 and 1 closed** — see
 [`SPECS/PHASE_0_RETROSPECTIVE.md`](SPECS/PHASE_0_RETROSPECTIVE.md) for the
-Phase 0 end-state metrics. We have **3 hazard layers + 1 reference layer +
-synthetic portfolio wired**: RGA, PPRI, TRI, IGN BD TOPO communes (dept 069
-Rhône via [`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks)),
-plus `portfolio_policies` (~5k sample / 500k full) and a hand-seeded
-`events` table. Windstorms are deferred (SPEC §10.6); `portfolio_claims`
-is Phase 1.
+data-foundation end-state, and [`SPECS/BENCHMARKS.md`](SPECS/BENCHMARKS.md)
+for the P1 timing numbers (6/6 queries < 1 s on a Small Serverless SQL WH).
+We have **3 hazard layers + 1 reference layer + synthetic portfolio + a
+layer registry**: RGA, PPRI, TRI, IGN BD TOPO communes (dept 069 Rhône via
+[`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks)), plus
+`portfolio_policies` (~5k sample / 500k full), a hand-seeded `events`
+table, and `catnat_silver.layer_index` cataloguing everything for the
+future MCP `list_layers` tool. Windstorms are deferred (SPEC §10.6);
+`portfolio_claims` is Phase 2 work.
+
+Run `uv run catnat bench --out SPECS/BENCHMARKS.md` any time the gold
+layout changes — the report regenerates with pass/fail per query against
+the <1 s target.
 
 Runnable sample queries showing the cross-layer H3 join pattern live in
 [`notebooks/queries/`](notebooks/queries/) — start there to get a feel for
