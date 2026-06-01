@@ -20,3 +20,6 @@ targets:
   dev:
     mode: development
     default: true
+    workspace:
+      host: https://fevm-serverless-stable-po64og.cloud.databricks.com
+      profile: fevm-stable-po64og
