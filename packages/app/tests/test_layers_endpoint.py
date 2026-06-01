@@ -92,7 +92,12 @@ def test_layers_endpoint_handles_empty_result(client: TestClient) -> None:
 
 
 def test_layers_endpoint_passes_catalog_via_parameter_marker(client: TestClient) -> None:
-    """The route should never inline catalog — must use parameter markers."""
+    """The route should never inline catalog — must use parameter markers,
+    *as `StatementParameterListItem` instances* (raw dicts crash inside
+    `databricks.sdk.service.sql.execute_statement` with `'dict' object has
+    no attribute 'as_dict'`)."""
+    from databricks.sdk.service.sql import StatementParameterListItem
+
     stub = _make_sql_stub([])
     _override_sql(stub)
     try:
@@ -101,6 +106,11 @@ def test_layers_endpoint_passes_catalog_via_parameter_marker(client: TestClient)
         _clear_overrides()
 
     params = stub.execute_statement.call_args.kwargs["parameters"]
-    assert any(p["name"] == "catalog" for p in params), (
+    assert params, "expected at least one parameter"
+    for p in params:
+        assert isinstance(p, StatementParameterListItem), (
+            f"parameter must be StatementParameterListItem, got {type(p).__name__}"
+        )
+    assert any(p.name == "catalog" for p in params), (
         "catalog must be passed as a parameter, not concatenated"
     )

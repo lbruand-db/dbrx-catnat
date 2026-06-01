@@ -5,6 +5,8 @@ import "@/styles/globals.css";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { createRouter, RouterProvider } from "@tanstack/react-router";
+import { Provider as ReduxProvider } from "react-redux";
+import { keplerStore } from "@/lib/kepler-store";
 import { routeTree } from "@/types/routeTree.gen";
 
 // Create a new query client instance
@@ -35,9 +37,11 @@ if (!rootElement.innerHTML) {
     const root = createRoot(rootElement);
     root.render(
         <StrictMode>
-            <QueryClientProvider client={queryClient}>
-                <RouterProvider router={router} />
-            </QueryClientProvider>
+            <ReduxProvider store={keplerStore}>
+                <QueryClientProvider client={queryClient}>
+                    <RouterProvider router={router} />
+                </QueryClientProvider>
+            </ReduxProvider>
         </StrictMode>,
     );
 }
