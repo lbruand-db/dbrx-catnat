@@ -3,14 +3,6 @@ command:
   - "-c"
   - "uvicorn catnat_app.backend.app:app --host 0.0.0.0 --port $DATABRICKS_APP_PORT --workers 2"
 
-# Extra OAuth scopes carried by the user-OBO token (X-Forwarded-Access-Token).
-# Without `sql` here, /api/layers and /api/kepler/portfolio hit
-# `403 Forbidden — Invalid scope, required scopes: sql` when calling the
-# Statement Execution API. iam.current-user:read and iam.access-control:read
-# are granted implicitly and rejected if listed explicitly.
-user_api_scopes:
-  - sql
-
 # Env vars consumed by the FastAPI backend at lifespan startup. The warehouse
 # resource block below grants the app's service principal CAN_USE on the
 # warehouse; the env var tells SqlConfig (env_prefix='DATABRICKS_SQL_') which

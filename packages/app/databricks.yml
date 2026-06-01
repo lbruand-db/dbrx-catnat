@@ -15,6 +15,13 @@ resources:
       name: "catnat-app"
       description: "catnat-app created with apx"
       source_code_path: ./.build
+      # OAuth scopes the user-OBO token must carry. The `iam.*` scopes are
+      # implicit (and rejected if listed explicitly). Without `sql` here,
+      # /api/layers and /api/kepler/portfolio hit 403 from the Statement
+      # Execution API. Must be declared on the resource — putting it in
+      # app.yml is a no-op; `bundle deploy` would reset whatever the API has.
+      user_api_scopes:
+        - sql
 
 targets:
   dev:
