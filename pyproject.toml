@@ -57,6 +57,9 @@ markers = [
     "databricks: tests that require a live Databricks workspace connection (excluded in CI)",
 ]
 addopts = "--strict-markers"
+# Root pytest only sees the root tests; each workspace package owns its own
+# pytest discovery (see packages/app/tests/).
+testpaths = ["tests"]
 
 [tool.uv]
 
