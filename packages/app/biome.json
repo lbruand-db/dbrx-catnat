@@ -1,0 +1,75 @@
+{
+    "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+    "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+    "files": {
+        "ignoreUnknown": true,
+        "includes": [
+            "src/catnat_app/ui/**",
+            "!src/catnat_app/ui/types/routeTree.gen.ts",
+            "!src/catnat_app/ui/types/vite-env.d.ts",
+            "!src/catnat_app/ui/lib/api-client/**",
+            "!src/catnat_app/ui/styles/**",
+            "!src/catnat_app/ui/components/ui/**",
+            "!src/catnat_app/ui/components/apx/**",
+            "!src/catnat_app/ui/components/backgrounds/**",
+            "!src/catnat_app/ui/routes/_sidebar/**",
+            "!src/catnat_app/ui/routes/__root.tsx",
+            "!src/catnat_app/ui/main.tsx",
+            "vite.config.ts",
+            "vitest.config.ts",
+            "package.json",
+            "tsconfig.json"
+        ]
+    },
+    "formatter": {
+        "enabled": true,
+        "indentStyle": "space",
+        "indentWidth": 4,
+        "lineWidth": 100,
+        "lineEnding": "lf"
+    },
+    "linter": {
+        "enabled": true,
+        "rules": {
+            "recommended": true,
+            "correctness": {
+                "noUnusedVariables": "error",
+                "noUnusedImports": "error",
+                "useExhaustiveDependencies": "warn"
+            },
+            "style": {
+                "useImportType": "error",
+                "useConst": "error",
+                "noNonNullAssertion": "warn"
+            },
+            "suspicious": {
+                "noExplicitAny": "error",
+                "noConsole": { "level": "warn", "options": { "allow": ["warn", "error", "info"] } }
+            },
+            "complexity": {
+                "noUselessTypeConstraint": "error"
+            },
+            "performance": {
+                "noBarrelFile": "off"
+            }
+        }
+    },
+    "javascript": {
+        "formatter": {
+            "quoteStyle": "double",
+            "trailingCommas": "all",
+            "semicolons": "always",
+            "arrowParentheses": "always"
+        }
+    },
+    "json": {
+        "formatter": { "indentWidth": 4 }
+    },
+    "assist": {
+        "actions": {
+            "source": {
+                "organizeImports": "on"
+            }
+        }
+    }
+}

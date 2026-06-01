@@ -24,3 +24,34 @@ jobs:
       # Databricks-dependent tests are tagged with @pytest.mark.databricks
       # and skipped here; CI runs only the workspace-free tests.
       - run: uv run pytest -v --tb=short -m "not databricks"
+
+  app-backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --all-packages --all-groups
+        working-directory: .
+      - run: uv run --project packages/app pytest tests/ -v --tb=short
+        working-directory: .
+
+  app-frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Biome lint + format check
+        run: bunx @biomejs/biome check src/catnat_app/ui
+      - name: TypeScript typecheck
+        run: bunx tsc --noEmit
+      - name: Vitest
+        run: bunx vitest run

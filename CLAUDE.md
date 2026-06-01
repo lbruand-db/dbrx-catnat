@@ -27,6 +27,22 @@ Run `uv run catnat bench --out SPECS/BENCHMARKS.md` any time the gold
 layout changes — the report regenerates with pass/fail per query against
 the <1 s target.
 
+**Phase 2 (app scaffold) is in progress.** Lives under `packages/app/`
+as a uv workspace member, scaffolded with [apx](https://github.com/databricks-solutions/apx).
+React 19 + Vite + TypeScript (strict mode) on the frontend, FastAPI on
+the backend. Lint/format: **Biome** (single tool — `bunx @biomejs/biome
+check src/catnat_app/ui`). Frontend tests: **Vitest** + React Testing
+Library (`bunx vitest run`). Backend tests: `pytest` (FastAPI
+TestClient with dependency overrides for `_SqlDependency.__call__`).
+
+Three panes today: Leaflet (imperative — direct map handle for future
+MCP layer-ops), Kepler stub (real integration in 2.5), chat shell
+(agent in Phase 4). The `/api/layers` endpoint reads
+`catnat_silver.layer_index` via the user's OBO token.
+
+`apx frontend build` runs Vite under the hood; we keep our own
+`vitest.config.ts` separate to own the test environment.
+
 Runnable sample queries showing the cross-layer H3 join pattern live in
 [`notebooks/queries/`](notebooks/queries/) — start there to get a feel for
 the medallion before touching code.

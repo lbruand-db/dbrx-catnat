@@ -1,0 +1,1 @@
+command: ["uvicorn", "catnat_app.backend.app:app", "--workers", "2"]

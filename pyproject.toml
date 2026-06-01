@@ -57,3 +57,8 @@ markers = [
     "databricks: tests that require a live Databricks workspace connection (excluded in CI)",
 ]
 addopts = "--strict-markers"
+
+[tool.uv]
+
+[tool.uv.workspace]
+members = ["packages/*"]

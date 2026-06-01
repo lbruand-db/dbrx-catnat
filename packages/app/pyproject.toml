@@ -1,0 +1,55 @@
+[project]
+name = "catnat-app"
+dynamic = ["version"]
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.119.0",
+    "pydantic-settings>=2.11.0",
+    "uvicorn>=0.37.0",
+    "databricks-sdk>=0.74.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.0.3",
+    "ty>=0.0.12",
+]
+
+[tool.apx.metadata]
+app-name = "catnat-app"
+app-slug = "catnat_app"
+app-entrypoint = "catnat_app.backend.app:app"
+api-prefix = "/api"
+metadata-path = "src/catnat_app/_metadata.py"
+
+[tool.apx.ui]
+root = "src/catnat_app/ui"
+
+[tool.apx.ui.registries]
+"@animate-ui" = "https://animate-ui.com/r/{name}.json"
+"@ai-elements" = "https://registry.ai-sdk.dev/{name}.json"
+"@svgl" = "https://svgl.app/r/{name}.json"
+
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+fallback-version = "0.0.0"
+
+[tool.hatch.build.hooks.version]
+path = "src/catnat_app/_version.py"
+template = '''
+version = "{version}"
+'''
+
+[tool.hatch.build]
+artifacts = ["src/catnat_app/__dist__", "src/catnat_app/_metadata.py"]
+exclude = ["src/catnat_app/ui"]
