@@ -1,1 +1,21 @@
-command: ["uvicorn", "catnat_app.backend.app:app", "--workers", "2"]
+command:
+  - "sh"
+  - "-c"
+  - "uvicorn catnat_app.backend.app:app --host 0.0.0.0 --port $DATABRICKS_APP_PORT --workers 2"
+
+# Env vars consumed by the FastAPI backend at lifespan startup. The warehouse
+# resource block below grants the app's service principal CAN_USE on the
+# warehouse; the env var tells SqlConfig (env_prefix='DATABRICKS_SQL_') which
+# warehouse to talk to.
+env:
+  - name: DATABRICKS_SQL_WAREHOUSE_ID
+    value: "1c97ee257092c2b3"
+  - name: CATNAT_CATALOG
+    value: "serverless_stable_po64og_catalog"
+
+resources:
+  - name: warehouse
+    description: SQL warehouse used by /api/layers and future MCP query tools.
+    sql_warehouse:
+      id: "1c97ee257092c2b3"
+      permission: CAN_USE
