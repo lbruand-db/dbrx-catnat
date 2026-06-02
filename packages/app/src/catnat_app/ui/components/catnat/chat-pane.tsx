@@ -1,94 +1,162 @@
-import { type FormEvent, useState } from "react";
+import { Loader2, Send } from "lucide-react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useChat } from "@/hooks/use-chat";
+import type { ChatTurn } from "@/types/chat";
+import { ToolCallCard } from "./tool-call-card";
 
-export interface ChatMessage {
-    /** Stable id used for keying — `crypto.randomUUID()` at submit time. */
-    id: string;
-    role: "user" | "agent";
-    text: string;
-}
-
-export interface ChatPaneProps {
-    /**
-     * Test hook + Phase 4 wiring point — called when the user submits.
-     * The agent backend will replace the no-op default in Phase 4.
-     */
-    onSubmit?: (text: string) => Promise<ChatMessage | undefined> | ChatMessage | undefined;
-    initialMessages?: ChatMessage[];
-}
-
-const PLACEHOLDER_AGENT = "Agent not wired yet. Coming in Phase 4.";
+/** Suggested first prompts shown when the chat is empty. Tuned to the
+ * tools that exist today — once UI-mutating tools land in P4.3, swap in
+ * the demo-script prompts from SPEC §6. */
+const SUGGESTED_PROMPTS = [
+    "Quelles couches sont disponibles ?",
+    "Liste les communes du Rhône avec un PPRI.",
+    "Trouve les 5 communes les plus proches de POINT(4.85 45.75).",
+];
 
 /**
  * Chat / agent pane.
  *
- * Today: a typed-and-submit shell that maintains a local message list.
- * Phase 4 lights this up by wiring `onSubmit` to the MCP-backed Claude
- * runtime — same component, real responses.
+ * Streams agent SSE events from `/api/chat` via `useChat`. Renders
+ * messages as a vertical list, with collapsible tool-call cards
+ * interleaved into the assistant turn at the position the agent invoked
+ * them.
  */
-export function ChatPane({ onSubmit, initialMessages = [] }: ChatPaneProps) {
-    const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+export function ChatPane() {
+    const { turns, send, isStreaming, error } = useChat();
     const [draft, setDraft] = useState("");
+    const listRef = useRef<HTMLUListElement>(null);
+
+    // Auto-scroll to bottom as new content streams in. `turns` is the
+    // signal — biome's exhaustive-deps rule flags it as unused (the
+    // effect body only touches the ref), but we genuinely want to
+    // re-fire on every turn-list mutation, not just on mount.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: see comment above
+    useEffect(() => {
+        if (listRef.current) {
+            listRef.current.scrollTop = listRef.current.scrollHeight;
+        }
+    }, [turns]);
 
     async function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         const text = draft.trim();
-        if (!text) return;
-        const userMsg: ChatMessage = { id: crypto.randomUUID(), role: "user", text };
-        setMessages((prev) => [...prev, userMsg]);
+        if (!text || isStreaming) return;
         setDraft("");
+        await send(text);
+    }
 
-        const reply = (await onSubmit?.(text)) ?? {
-            id: crypto.randomUUID(),
-            role: "agent" as const,
-            text: PLACEHOLDER_AGENT,
-        };
-        if (reply && typeof reply === "object" && "id" in reply) {
-            setMessages((prev) => [...prev, reply]);
-        }
+    async function pickPrompt(prompt: string) {
+        if (isStreaming) return;
+        await send(prompt);
     }
 
     return (
-        <section className="flex flex-col h-full" aria-label="Chat" data-testid="chat-pane">
+        <section className="flex h-full flex-col" aria-label="Chat" data-testid="chat-pane">
             <ul
-                className="flex-1 overflow-y-auto p-3 space-y-2"
+                ref={listRef}
+                className="flex-1 space-y-3 overflow-y-auto p-3"
                 aria-label="Chat history"
                 data-testid="chat-messages"
             >
-                {messages.length === 0 ? (
-                    <li className="text-sm text-muted-foreground italic">
-                        Ask the agent something — “Show me PPRI in Vaucluse”, “Quelle est
-                        l'exposition RGA sur le portefeuille ?”.
+                {turns.length === 0 ? (
+                    <li data-testid="chat-empty-state">
+                        <p className="mb-3 text-sm text-muted-foreground italic">
+                            Ask the agent something to get started.
+                        </p>
+                        <div className="flex flex-col gap-1.5">
+                            {SUGGESTED_PROMPTS.map((p) => (
+                                <button
+                                    key={p}
+                                    type="button"
+                                    onClick={() => pickPrompt(p)}
+                                    disabled={isStreaming}
+                                    className="rounded-md border bg-background px-2 py-1.5 text-left text-sm hover:bg-muted disabled:opacity-50"
+                                    data-testid="suggested-prompt"
+                                >
+                                    {p}
+                                </button>
+                            ))}
+                        </div>
                     </li>
                 ) : (
-                    messages.map((m) => (
-                        <li
-                            key={m.id}
-                            className={
-                                m.role === "user" ? "text-right" : "text-left text-muted-foreground"
-                            }
-                            data-role={m.role}
-                        >
-                            <span className="inline-block rounded-md bg-muted px-2 py-1 text-sm">
-                                {m.text}
-                            </span>
-                        </li>
-                    ))
+                    turns.map((t) => <ChatTurnView key={t.id} turn={t} />)
+                )}
+                {error && (
+                    <li
+                        className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                        data-testid="chat-error"
+                    >
+                        {error}
+                    </li>
                 )}
             </ul>
-            <form className="flex gap-2 p-3 border-t" onSubmit={handleSubmit}>
+            <form className="flex gap-2 border-t p-3" onSubmit={handleSubmit}>
                 <Input
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
                     placeholder="Type a question…"
                     aria-label="Message to agent"
                     data-testid="chat-input"
+                    disabled={isStreaming}
                 />
-                <Button type="submit" data-testid="chat-submit">
-                    Send
+                <Button
+                    type="submit"
+                    data-testid="chat-submit"
+                    disabled={isStreaming || !draft.trim()}
+                >
+                    {isStreaming ? (
+                        <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                        <Send className="size-4" />
+                    )}
                 </Button>
             </form>
         </section>
+    );
+}
+
+interface ChatTurnViewProps {
+    turn: ChatTurn;
+}
+
+function ChatTurnView({ turn }: ChatTurnViewProps) {
+    if (turn.role === "user") {
+        return (
+            <li className="flex justify-end" data-role="user" data-testid="chat-turn-user">
+                <div className="max-w-[85%] rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground">
+                    {turn.text}
+                </div>
+            </li>
+        );
+    }
+
+    const showCursor = turn.isStreaming && turn.text.length > 0;
+    const showSpinner = turn.isStreaming && turn.text.length === 0;
+    return (
+        <li
+            className="space-y-2"
+            data-role="assistant"
+            data-testid="chat-turn-assistant"
+            data-streaming={turn.isStreaming}
+        >
+            {turn.toolCalls.map((tc) => (
+                <ToolCallCard key={tc.id} tool={tc} />
+            ))}
+            {showSpinner ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="size-3 animate-spin" />
+                    <span>thinking…</span>
+                </div>
+            ) : (
+                <div className="whitespace-pre-wrap text-sm">
+                    {turn.text}
+                    {showCursor && (
+                        <span className="ml-0.5 inline-block h-3 w-1.5 animate-pulse bg-current align-middle" />
+                    )}
+                </div>
+            )}
+        </li>
     );
 }
