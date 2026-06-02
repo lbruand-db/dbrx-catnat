@@ -1,7 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
+import type L from "leaflet";
+import type { Map as LeafletMap } from "leaflet";
+import { useCallback, useRef } from "react";
 import { ChatPane } from "@/components/catnat/chat-pane";
 import { LeafletPane } from "@/components/catnat/leaflet-pane";
 import { useLayers } from "@/hooks/use-layers";
+import { applyMapOp } from "@/lib/map-dispatcher";
+import type { MapOp } from "@/types/chat";
 
 export const Route = createFileRoute("/")({
     component: () => <DemoLayout />,
@@ -9,10 +14,28 @@ export const Route = createFileRoute("/")({
 
 /**
  * GeoCatNat 2-pane layout. Left = operational Leaflet map; right = chat /
- * agent. The Kepler analytical pane was removed pending a clearer use case.
+ * agent. The chat pane streams `map_op` events from `/api/chat`; we lift
+ * the map handle here so the dispatcher can mutate it on the agent's
+ * behalf (add / remove / zoom / style).
  */
 function DemoLayout() {
     const { data: layers, error } = useLayers();
+
+    // The Leaflet map handle + the set of agent-added GeoJSON layers,
+    // both held in refs so we can mutate them across renders without
+    // forcing a re-render of either pane.
+    const mapRef = useRef<LeafletMap | null>(null);
+    const agentLayersRef = useRef<Map<string, L.GeoJSON>>(new Map());
+
+    const handleMapReady = useCallback((m: LeafletMap) => {
+        mapRef.current = m;
+    }, []);
+
+    const handleMapOp = useCallback((op: MapOp) => {
+        const map = mapRef.current;
+        if (!map) return;
+        applyMapOp(op, map, agentLayersRef.current);
+    }, []);
 
     return (
         <div className="grid h-screen w-screen grid-cols-[1fr_24rem] overflow-hidden">
@@ -21,14 +44,14 @@ function DemoLayout() {
                 aria-label="Operational map"
                 data-testid="leaflet-section"
             >
-                <LeafletPane layers={layers ?? []} />
+                <LeafletPane layers={layers ?? []} onMapReady={handleMapReady} />
             </section>
             <section
                 className="border-l overflow-hidden"
                 aria-label="Chat"
                 data-testid="chat-section"
             >
-                <ChatPane />
+                <ChatPane onMapOp={handleMapOp} />
             </section>
             {error && (
                 <div className="absolute bottom-4 left-4 rounded-md bg-destructive p-3 text-sm text-destructive-foreground">

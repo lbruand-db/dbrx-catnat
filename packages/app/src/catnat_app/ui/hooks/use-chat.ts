@@ -1,15 +1,22 @@
 import { useCallback, useRef, useState } from "react";
 import { parseSseStream } from "@/lib/sse";
-import type { ChatTurn, ToolCall } from "@/types/chat";
+import type { ChatTurn, MapOp, ToolCall } from "@/types/chat";
 
 /**
  * Talks to `/api/chat` over SSE. Holds the conversation as a list of
  * `ChatTurn` records and mutates the in-flight assistant turn as
- * delta/tool_call/tool_result events arrive.
+ * delta/tool_call/tool_result/map_op events arrive.
  *
  * The hook is intentionally state-machine-thin: every event maps to one
- * `setTurns` call. React batches the re-renders.
+ * `setTurns` call. React batches the re-renders. `map_op` events fire
+ * the optional `onMapOp` callback so a parent can mutate the Leaflet
+ * map handle without coupling the hook to a map instance.
  */
+export interface UseChatOptions {
+    /** Invoked for every `map_op` SSE event. Receives the fully-typed payload. */
+    onMapOp?: (op: MapOp) => void;
+}
+
 export interface UseChatResult {
     turns: ChatTurn[];
     send: (text: string) => Promise<void>;
@@ -19,7 +26,7 @@ export interface UseChatResult {
 
 const CHAT_URL = "/api/chat";
 
-export function useChat(): UseChatResult {
+export function useChat(options?: UseChatOptions): UseChatResult {
     const [turns, setTurns] = useState<ChatTurn[]>([]);
     const [isStreaming, setIsStreaming] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -27,6 +34,10 @@ export function useChat(): UseChatResult {
      * from a consistent snapshot, not a stale closure capture. */
     const turnsRef = useRef<ChatTurn[]>([]);
     turnsRef.current = turns;
+    /** Hold the latest callback in a ref so `send` doesn't need to depend
+     * on it (which would invalidate the memoised function on each render). */
+    const onMapOpRef = useRef<UseChatOptions["onMapOp"]>(options?.onMapOp);
+    onMapOpRef.current = options?.onMapOp;
 
     const send = useCallback(async (text: string) => {
         const trimmed = text.trim();
@@ -93,6 +104,10 @@ export function useChat(): UseChatResult {
                             ...t,
                             toolCalls: [...t.toolCalls, tc],
                         }));
+                        break;
+                    }
+                    case "map_op": {
+                        onMapOpRef.current?.(payload as unknown as MapOp);
                         break;
                     }
                     case "tool_result": {

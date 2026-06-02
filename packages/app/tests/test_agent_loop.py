@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 from catnat_app.backend.agent.loop import run_agent
 from catnat_app.backend.core.sql import Sql
-from catnat_app.backend.mcp import tools as mcp_tools
+from catnat_app.backend.mcp import _sql_client as _sql_client_mod
 from databricks.sdk.service.sql import StatementState
 
 # --- Mock chunk shapes that mimic the openai streaming surface --------
@@ -172,7 +172,7 @@ async def test_single_tool_call_dispatches_to_mcp_then_finalises(
             ]
         ]
     )
-    monkeypatch.setattr(mcp_tools, "get_app_sql", lambda: (sql, "cat"))
+    monkeypatch.setattr(_sql_client_mod, "get_app_sql", lambda: (sql, "cat"))
 
     client = _ScriptedClient(
         iterations=[
@@ -216,7 +216,7 @@ async def test_tool_error_is_surfaced_to_agent(monkeypatch: pytest.MonkeyPatch) 
 
     # No rows from the allowlist lookup → MCP returns isError=True.
     sql = _stub_sql([])
-    monkeypatch.setattr(mcp_tools, "get_app_sql", lambda: (sql, "cat"))
+    monkeypatch.setattr(_sql_client_mod, "get_app_sql", lambda: (sql, "cat"))
 
     client = _ScriptedClient(
         iterations=[
@@ -262,7 +262,7 @@ async def test_empty_tool_arguments_normalised_to_object_for_next_iteration(
             ]
         ]
     )
-    monkeypatch.setattr(mcp_tools, "get_app_sql", lambda: (sql, "cat"))
+    monkeypatch.setattr(_sql_client_mod, "get_app_sql", lambda: (sql, "cat"))
 
     # Only ONE arguments chunk, and it's empty — no follow-up "{}".
     client = _ScriptedClient(
@@ -286,6 +286,88 @@ async def test_empty_tool_arguments_normalised_to_object_for_next_iteration(
 
 
 @pytest.mark.anyio("asyncio")
+async def test_ui_tool_result_emits_map_op_and_strips_geojson_for_llm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When a tool result has an `op` field, the loop emits both a
+    `map_op` event (full payload) and a `tool_result` (geojson stripped
+    so the LLM doesn't drown in features)."""
+    # Allowlist row for a polygon layer, then the add_layer query result.
+    polygon_row = [
+        [
+            "hazard_ppri_communes",
+            "cat.catnat_silver.hazard_ppri_communes",
+            "flood",
+            "silver",
+            "polygon",
+            None,
+            "geometry",
+            True,
+        ]
+    ]
+    sql = MagicMock(spec=Sql)
+    responses = []
+    # 1) allowlist lookup
+    r1 = MagicMock()
+    r1.status.state = StatementState.SUCCEEDED
+    r1.status.error = None
+    r1.result.data_array = polygon_row
+    r1.manifest.schema.columns = []
+    responses.append(r1)
+    # 2) add_layer SELECT
+    r2 = MagicMock()
+    r2.status.state = StatementState.SUCCEEDED
+    r2.status.error = None
+    r2.result.data_array = [['{"type":"Polygon","coordinates":[[[0,0],[1,1],[1,0],[0,0]]]}', "x"]]
+    r2.manifest.schema.columns = [MagicMock(), MagicMock()]
+    r2.manifest.schema.columns[0].name = "geom_geojson"
+    r2.manifest.schema.columns[1].name = "code_dep"
+    responses.append(r2)
+    sql.execute_statement = MagicMock(side_effect=responses)
+    monkeypatch.setattr(_sql_client_mod, "get_app_sql", lambda: (sql, "cat"))
+
+    client = _ScriptedClient(
+        iterations=[
+            [
+                _chunk_tool_call(index=0, id="call_1", name="add_layer", arguments=""),
+                _chunk_tool_call(index=0, arguments='{"layer_id":"hazard_ppri_communes"}'),
+            ],
+            [_chunk_text("Done.")],
+        ]
+    )
+    events: list[Any] = []
+    async for ev in run_agent(
+        messages=[{"role": "user", "content": "show me PPRI"}],
+        client_factory=lambda: client,  # type: ignore[arg-type]
+    ):
+        events.append((ev.name, ev.data))
+
+    names = [e[0] for e in events]
+    # map_op must precede the tool_result so the FE sees the UI mutation
+    # before the LLM-visible summary.
+    assert "map_op" in names
+    assert names.index("map_op") < names.index("tool_result")
+
+    map_op = next(e for e in events if e[0] == "map_op")[1]
+    assert map_op["op"] == "add_layer"
+    assert map_op["layer_id"] == "hazard_ppri_communes"
+    # Full geojson present in map_op
+    assert "geojson" in map_op
+    assert map_op["geojson"]["type"] == "FeatureCollection"
+
+    tool_result = next(e for e in events if e[0] == "tool_result")[1]
+    # geojson stripped from LLM-bound payload
+    assert "geojson" not in tool_result["result"]
+    assert tool_result["result"]["op"] == "add_layer"
+    assert tool_result["result"]["row_count"] == 1
+
+    # And the same stripped payload is what we resubmit in history.
+    second = client.calls[1]
+    tool_msg = next(m for m in second["messages"] if m["role"] == "tool")
+    assert "geojson" not in tool_msg["content"]
+
+
+@pytest.mark.anyio("asyncio")
 async def test_max_iterations_emits_error() -> None:
     """If FMAPI keeps emitting tool calls forever, we abort cleanly."""
     # Script enough iterations that each one is a tool call. We script
@@ -303,9 +385,7 @@ async def test_max_iterations_emits_error() -> None:
     # buffer doesn't go through the allowlist; we still need a real Sql stub
     # because buffer_impl executes a statement.
     sql = _stub_sql([["POLYGON((0 0,1 1,0 0))"]])
-    import catnat_app.backend.mcp.tools as mcp_tools_mod
-
-    mcp_tools_mod.get_app_sql = lambda: (sql, "cat")
+    _sql_client_mod.get_app_sql = lambda: (sql, "cat")
 
     events = []
     async for ev in run_agent(

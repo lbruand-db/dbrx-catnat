@@ -71,6 +71,33 @@ def _accumulate_tool_calls(acc: dict[int, dict[str, Any]], deltas: list[Any]) ->
                 slot["function"]["arguments"] += d.function.arguments
 
 
+# Fields stripped from a UI-tool result before it reaches the LLM —
+# `geojson` and `geom_geojson` can be megabytes of feature data and add
+# no value to the model's next decision.
+_LLM_STRIP_KEYS = frozenset({"geojson", "geom_geojson"})
+
+
+def _split_ui_payload(payload: Any, is_error: bool) -> tuple[dict[str, Any] | None, Any]:
+    """Split a tool payload into (map_op for FE, slim summary for LLM).
+
+    FastMCP wraps a tool's dict/list return under `structuredContent =
+    {"result": <value>}`. A UI tool is one whose inner result is a dict
+    carrying an `op` key — we unwrap it for the FE map_op event and
+    return the same inner dict (with heavy fields stripped) so the LLM
+    sees a clean success summary instead of the wrapper noise.
+    """
+    if is_error:
+        return None, payload
+    inner = payload
+    if isinstance(payload, dict) and set(payload.keys()) == {"result"}:
+        inner = payload["result"]
+    if not isinstance(inner, dict) or "op" not in inner:
+        return None, payload
+    map_op = inner
+    llm = {k: v for k, v in inner.items() if k not in _LLM_STRIP_KEYS}
+    return map_op, llm
+
+
 def _result_payload(tool_result: Any) -> tuple[Any, bool]:
     """Extract a JSON-serialisable payload + an is-error flag from an MCP CallToolResult."""
     is_error = bool(getattr(tool_result, "isError", False))
@@ -179,12 +206,19 @@ async def run_agent(
                     payload = f"tool call raised: {e}"
                     is_error = True
 
+                # UI-mutating tools tag their result with an `op` field —
+                # the full payload goes to the FE via `map_op` while the
+                # LLM gets a slim summary so it doesn't drown in geojson.
+                map_op_payload, llm_payload = _split_ui_payload(payload, is_error)
+                if map_op_payload is not None:
+                    yield AgentEvent("map_op", map_op_payload)
+
                 yield AgentEvent(
                     "tool_result",
                     {
                         "id": tc_id,
                         "name": tool_name,
-                        "result": payload,
+                        "result": llm_payload,
                         "is_error": is_error,
                     },
                 )
@@ -193,7 +227,7 @@ async def run_agent(
                     {
                         "role": "tool",
                         "tool_call_id": tc_id,
-                        "content": json.dumps(payload, ensure_ascii=False, default=str),
+                        "content": json.dumps(llm_payload, ensure_ascii=False, default=str),
                     }
                 )
 

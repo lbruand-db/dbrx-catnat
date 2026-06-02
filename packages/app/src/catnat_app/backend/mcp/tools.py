@@ -15,8 +15,8 @@ from databricks.sdk.service.sql import StatementParameterListItem, StatementStat
 from mcp.server.fastmcp import FastMCP
 
 from ..core.sql import Sql
+from . import _sql_client
 from . import sql_templates as t
-from ._sql_client import get_app_sql
 from .allowlist import LayerNotAllowed, get_allowed_layer
 
 # --- Shared helpers -----------------------------------------------------
@@ -190,7 +190,7 @@ def register(server: FastMCP) -> None:
         ),
     )
     def _list_layers() -> list[dict[str, Any]]:
-        sql, catalog = get_app_sql()
+        sql, catalog = _sql_client.get_app_sql()
         return list_layers_impl(sql, catalog)
 
     @server.tool(
@@ -210,7 +210,7 @@ def register(server: FastMCP) -> None:
         where: dict[str, str | int | float | bool] | None = None,
         limit: int = 100,
     ) -> dict[str, Any]:
-        sql, catalog = get_app_sql()
+        sql, catalog = _sql_client.get_app_sql()
         bbox_tuple: tuple[float, float, float, float] | None = None
         if bbox is not None:
             if len(bbox) != 4:
@@ -233,7 +233,7 @@ def register(server: FastMCP) -> None:
         ),
     )
     def _intersect_layer(layer_id: str, geom_wkt: str, limit: int = 100) -> dict[str, Any]:
-        sql, catalog = get_app_sql()
+        sql, catalog = _sql_client.get_app_sql()
         try:
             return intersect_layer_impl(sql, catalog, layer_id, geom_wkt=geom_wkt, limit=limit)
         except LayerNotAllowed as e:
@@ -248,7 +248,7 @@ def register(server: FastMCP) -> None:
         ),
     )
     def _nearest(layer_id: str, point_wkt: str, k: int = 5) -> dict[str, Any]:
-        sql, catalog = get_app_sql()
+        sql, catalog = _sql_client.get_app_sql()
         try:
             return nearest_impl(sql, catalog, layer_id, point_wkt=point_wkt, k=k)
         except LayerNotAllowed as e:
@@ -263,7 +263,7 @@ def register(server: FastMCP) -> None:
         ),
     )
     def _buffer(geom_wkt: str, meters: float) -> dict[str, Any]:
-        sql, _ = get_app_sql()
+        sql, _ = _sql_client.get_app_sql()
         return buffer_impl(sql, geom_wkt=geom_wkt, meters=meters)
 
 

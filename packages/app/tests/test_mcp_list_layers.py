@@ -18,8 +18,8 @@ from unittest.mock import MagicMock
 
 import pytest
 from catnat_app.backend.core.sql import Sql
+from catnat_app.backend.mcp import _sql_client as _sql_client_mod
 from catnat_app.backend.mcp import mcp_server
-from catnat_app.backend.mcp import tools as mcp_tools
 from databricks.sdk.service.sql import StatementParameterListItem, StatementState
 from mcp.shared.memory import create_connected_server_and_client_session
 
@@ -35,7 +35,7 @@ def _make_sql_stub(rows: list[list[object]]) -> Sql:
 
 
 def _override_sql(monkeypatch: pytest.MonkeyPatch, sql: Sql, catalog: str) -> None:
-    monkeypatch.setattr(mcp_tools, "get_app_sql", lambda: (sql, catalog))
+    monkeypatch.setattr(_sql_client_mod, "get_app_sql", lambda: (sql, catalog))
 
 
 @pytest.mark.anyio("asyncio")

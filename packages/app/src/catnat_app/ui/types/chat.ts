@@ -26,3 +26,32 @@ export interface ChatTurn {
     /** Set when an `error` SSE event surfaced for this turn. */
     error?: string;
 }
+
+/** Map-mutating operations the agent can emit via the `map_op` SSE event.
+ * Mirrors the payloads from `backend/mcp/ui_tools.py`. */
+export type MapOp =
+    | {
+          op: "add_layer";
+          layer_id: string;
+          peril: string;
+          geojson: GeoJSON.FeatureCollection;
+          style: Record<string, unknown>;
+          row_count: number;
+          status: "ok";
+      }
+    | {
+          op: "remove_layer";
+          layer_id: string;
+          status: "ok";
+      }
+    | {
+          op: "zoom_to";
+          geom_geojson: GeoJSON.Geometry;
+          status: "ok";
+      }
+    | {
+          op: "style_layer";
+          layer_id: string;
+          style: Record<string, unknown>;
+          status: "ok";
+      };

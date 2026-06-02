@@ -9,6 +9,7 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 
 from . import tools as _tools
+from . import ui_tools as _ui_tools
 
 mcp_server: FastMCP = FastMCP(
     name="catnat",
@@ -20,6 +21,8 @@ mcp_server: FastMCP = FastMCP(
     ),
 )
 
-# Tool registration — kept in `tools.py` so we can unit-test the underlying
-# implementations without spinning up the MCP transport.
+# Tool registration — implementations live in `tools.py` (data) and
+# `ui_tools.py` (map-mutating) so we can unit-test them without spinning
+# up the MCP transport.
 _tools.register(mcp_server)
+_ui_tools.register(mcp_server)

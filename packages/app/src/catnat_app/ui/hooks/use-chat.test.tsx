@@ -124,6 +124,31 @@ describe("useChat", () => {
         expect(result.current.turns[1].isStreaming).toBe(false);
     });
 
+    it("fires onMapOp for each map_op SSE event with the typed payload", async () => {
+        const sse =
+            'event: map_op\ndata: {"op":"add_layer","layer_id":"x","peril":"flood","geojson":{"type":"FeatureCollection","features":[]},"style":{},"row_count":0,"status":"ok"}\n\n' +
+            'event: tool_result\ndata: {"id":"call_1","name":"add_layer","result":{"op":"add_layer","layer_id":"x","row_count":0,"status":"ok"},"is_error":false}\n\n' +
+            'event: delta\ndata: {"text":"done"}\n\n' +
+            'event: done\ndata: {"final_text":"done"}\n\n';
+        mockFetch(() => streamResponse(sse));
+
+        const ops: Array<{ op: string; layer_id?: string }> = [];
+        const { result } = renderHook(() =>
+            useChat({
+                onMapOp: (op) => {
+                    ops.push(op as { op: string; layer_id?: string });
+                },
+            }),
+        );
+        await act(async () => {
+            await result.current.send("show layer x");
+        });
+
+        expect(ops).toHaveLength(1);
+        expect(ops[0].op).toBe("add_layer");
+        expect(ops[0].layer_id).toBe("x");
+    });
+
     it("ignores empty / whitespace-only sends", async () => {
         const fetchSpy = mockFetch(() => streamResponse("event: done\ndata: {}\n\n"));
         const { result } = renderHook(() => useChat());
