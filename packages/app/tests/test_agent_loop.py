@@ -239,6 +239,53 @@ async def test_tool_error_is_surfaced_to_agent(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.anyio("asyncio")
+async def test_empty_tool_arguments_normalised_to_object_for_next_iteration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: Claude streams `arguments=""` for zero-arg tools and the
+    Anthropic FMAPI validator then rejects the next request with
+    `INVALID_PARAMETER_VALUE: ... not a valid JSON string`. The loop must
+    normalise `""` to `"{}"` before resending the history."""
+    sql = _stub_sql(
+        [
+            [
+                "hazard_rga_h3",
+                "cat.catnat_gold.hazard_rga_h3",
+                "drought",
+                "gold",
+                "h3",
+                "h3",
+                None,
+                "Etalab",
+                True,
+                "RGA",
+            ]
+        ]
+    )
+    monkeypatch.setattr(mcp_tools, "get_app_sql", lambda: (sql, "cat"))
+
+    # Only ONE arguments chunk, and it's empty — no follow-up "{}".
+    client = _ScriptedClient(
+        iterations=[
+            [_chunk_tool_call(index=0, id="call_1", name="list_layers", arguments="")],
+            [_chunk_text("ok")],
+        ]
+    )
+    async for _ in run_agent(
+        messages=[{"role": "user", "content": "layers?"}],
+        client_factory=lambda: client,  # type: ignore[arg-type]
+    ):
+        pass
+
+    # Inspect what we sent on iteration #2 (the resubmit with the tool result).
+    second = client.calls[1]
+    assistant_msg = next(m for m in second["messages"] if m["role"] == "assistant")
+    assert assistant_msg["tool_calls"][0]["function"]["arguments"] == "{}", (
+        "empty arguments must be normalised to '{}' so FMAPI accepts the resubmit"
+    )
+
+
+@pytest.mark.anyio("asyncio")
 async def test_max_iterations_emits_error() -> None:
     """If FMAPI keeps emitting tool calls forever, we abort cleanly."""
     # Script enough iterations that each one is a tool call. We script

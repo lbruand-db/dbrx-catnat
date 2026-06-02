@@ -141,9 +141,21 @@ async def run_agent(
                 return
 
             tool_calls = [tool_calls_acc[i] for i in sorted(tool_calls_acc)]
+            # Anthropic's FMAPI validator rejects tool_calls whose
+            # `arguments` field is the empty string — Claude emits `""`
+            # when the tool takes no args. Replace with `"{}"` so the
+            # next iteration's request validates.
+            for tc in tool_calls:
+                if not tc["function"]["arguments"].strip():
+                    tc["function"]["arguments"] = "{}"
             history.append(
                 {
                     "role": "assistant",
+                    # FMAPI accepts a null `content` when tool_calls is
+                    # present; an empty string also passes but is
+                    # semantically odd. Stick with the empty string
+                    # (also what OpenAI's spec recommends) — the bug
+                    # was strictly the arguments field.
                     "content": assistant_text,
                     "tool_calls": tool_calls,
                 }
