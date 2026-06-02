@@ -22,12 +22,6 @@ export interface ComplexValue {
 export interface HTTPValidationError {
     detail?: ValidationError[];
 }
-export interface KeplerDatasetOut {
-    fields: string[];
-    id: string;
-    label: string;
-    rows: Record<string, string | number | number | null>[];
-}
 export interface Layer {
     description: string;
     geom_column?: string | null;
@@ -159,125 +153,12 @@ export function useCurrentUserSuspense<TData = {
         ...options?.query
     });
 }
-export interface KeplerPortfolioParams {
-    "X-Forwarded-Host"?: string | null;
-    "X-Forwarded-Preferred-Username"?: string | null;
-    "X-Forwarded-User"?: string | null;
-    "X-Forwarded-Email"?: string | null;
-    "X-Request-Id"?: string | null;
-    "X-Forwarded-Access-Token"?: string | null;
-}
-export const keplerPortfolio = async (params?: KeplerPortfolioParams, options?: RequestInit): Promise<{
-    data: KeplerDatasetOut;
-}> =>{
-    const res = await fetch("/api/kepler/portfolio", {
-        ...options,
-        method: "GET",
-        headers: {
-            ...(params?.["X-Forwarded-Host"] != null && {
-                "X-Forwarded-Host": params["X-Forwarded-Host"]
-            }),
-            ...(params?.["X-Forwarded-Preferred-Username"] != null && {
-                "X-Forwarded-Preferred-Username": params["X-Forwarded-Preferred-Username"]
-            }),
-            ...(params?.["X-Forwarded-User"] != null && {
-                "X-Forwarded-User": params["X-Forwarded-User"]
-            }),
-            ...(params?.["X-Forwarded-Email"] != null && {
-                "X-Forwarded-Email": params["X-Forwarded-Email"]
-            }),
-            ...(params?.["X-Request-Id"] != null && {
-                "X-Request-Id": params["X-Request-Id"]
-            }),
-            ...(params?.["X-Forwarded-Access-Token"] != null && {
-                "X-Forwarded-Access-Token": params["X-Forwarded-Access-Token"]
-            }),
-            ...options?.headers
-        }
-    });
-    if (!res.ok) {
-        const body = await res.text();
-        let parsed: unknown;
-        try {
-            parsed = JSON.parse(body);
-        } catch  {
-            parsed = body;
-        }
-        throw new ApiError(res.status, res.statusText, parsed);
-    }
-    return {
-        data: await res.json()
-    };
-};
-export const keplerPortfolioKey = (params?: KeplerPortfolioParams)=>{
-    return [
-        "/api/kepler/portfolio",
-        params
-    ] as const;
-};
-export function useKeplerPortfolio<TData = {
-    data: KeplerDatasetOut;
-}>(options?: {
-    params?: KeplerPortfolioParams;
-    query?: Omit<UseQueryOptions<{
-        data: KeplerDatasetOut;
-    }, ApiError, TData>, "queryKey" | "queryFn">;
-}) {
-    return useQuery({
-        queryKey: keplerPortfolioKey(options?.params),
-        queryFn: ()=>keplerPortfolio(options?.params),
-        ...options?.query
-    });
-}
-export function useKeplerPortfolioSuspense<TData = {
-    data: KeplerDatasetOut;
-}>(options?: {
-    params?: KeplerPortfolioParams;
-    query?: Omit<UseSuspenseQueryOptions<{
-        data: KeplerDatasetOut;
-    }, ApiError, TData>, "queryKey" | "queryFn">;
-}) {
-    return useSuspenseQuery({
-        queryKey: keplerPortfolioKey(options?.params),
-        queryFn: ()=>keplerPortfolio(options?.params),
-        ...options?.query
-    });
-}
-export interface ListLayersParams {
-    "X-Forwarded-Host"?: string | null;
-    "X-Forwarded-Preferred-Username"?: string | null;
-    "X-Forwarded-User"?: string | null;
-    "X-Forwarded-Email"?: string | null;
-    "X-Request-Id"?: string | null;
-    "X-Forwarded-Access-Token"?: string | null;
-}
-export const listLayers = async (params?: ListLayersParams, options?: RequestInit): Promise<{
+export const listLayers = async (options?: RequestInit): Promise<{
     data: LayerListOut;
 }> =>{
     const res = await fetch("/api/layers", {
         ...options,
-        method: "GET",
-        headers: {
-            ...(params?.["X-Forwarded-Host"] != null && {
-                "X-Forwarded-Host": params["X-Forwarded-Host"]
-            }),
-            ...(params?.["X-Forwarded-Preferred-Username"] != null && {
-                "X-Forwarded-Preferred-Username": params["X-Forwarded-Preferred-Username"]
-            }),
-            ...(params?.["X-Forwarded-User"] != null && {
-                "X-Forwarded-User": params["X-Forwarded-User"]
-            }),
-            ...(params?.["X-Forwarded-Email"] != null && {
-                "X-Forwarded-Email": params["X-Forwarded-Email"]
-            }),
-            ...(params?.["X-Request-Id"] != null && {
-                "X-Request-Id": params["X-Request-Id"]
-            }),
-            ...(params?.["X-Forwarded-Access-Token"] != null && {
-                "X-Forwarded-Access-Token": params["X-Forwarded-Access-Token"]
-            }),
-            ...options?.headers
-        }
+        method: "GET"
     });
     if (!res.ok) {
         const body = await res.text();
@@ -293,37 +174,34 @@ export const listLayers = async (params?: ListLayersParams, options?: RequestIni
         data: await res.json()
     };
 };
-export const listLayersKey = (params?: ListLayersParams)=>{
+export const listLayersKey = ()=>{
     return [
-        "/api/layers",
-        params
+        "/api/layers"
     ] as const;
 };
 export function useListLayers<TData = {
     data: LayerListOut;
 }>(options?: {
-    params?: ListLayersParams;
     query?: Omit<UseQueryOptions<{
         data: LayerListOut;
     }, ApiError, TData>, "queryKey" | "queryFn">;
 }) {
     return useQuery({
-        queryKey: listLayersKey(options?.params),
-        queryFn: ()=>listLayers(options?.params),
+        queryKey: listLayersKey(),
+        queryFn: ()=>listLayers(),
         ...options?.query
     });
 }
 export function useListLayersSuspense<TData = {
     data: LayerListOut;
 }>(options?: {
-    params?: ListLayersParams;
     query?: Omit<UseSuspenseQueryOptions<{
         data: LayerListOut;
     }, ApiError, TData>, "queryKey" | "queryFn">;
 }) {
     return useSuspenseQuery({
-        queryKey: listLayersKey(options?.params),
-        queryFn: ()=>listLayers(options?.params),
+        queryKey: listLayersKey(),
+        queryFn: ()=>listLayers(),
         ...options?.query
     });
 }

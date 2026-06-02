@@ -11,6 +11,11 @@ export default defineConfig({
         alias: {
             "@": fileURLToPath(new URL("./src/catnat_app/ui", import.meta.url)),
         },
+        // Force a single React copy: kepler.gl pulls react-palm@3.3.x which
+        // brings its own react-dom/react-reconciler from the React 16 era.
+        // Without dedupe, the Kepler pane test hits "Cannot read properties
+        // of null (reading 'useMemo')" from a stale hook dispatcher.
+        dedupe: ["react", "react-dom"],
     },
     test: {
         environment: "jsdom",

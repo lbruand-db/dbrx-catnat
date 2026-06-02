@@ -16,7 +16,8 @@ from fastapi.testclient import TestClient
 from databricks.sdk.service.sql import StatementState
 
 from catnat_app.backend.app import app
-from catnat_app.backend.core.sql import Sql, _SqlDependency
+from catnat_app.backend.app_sql import _get_app_sql
+from catnat_app.backend.core.sql import Sql
 
 
 def _make_sql_stub(rows: list[list[str | bool | None]]) -> Sql:
@@ -36,11 +37,11 @@ def _override_sql(stub: Sql):
     Bypasses the full `_SqlDependency.__call__(request, user_ws)` chain so
     the test doesn't need a real OBO token or workspace client.
     """
-    app.dependency_overrides[_SqlDependency.__call__] = lambda: stub
+    app.dependency_overrides[_get_app_sql] = lambda: stub
 
 
 def _clear_overrides() -> None:
-    app.dependency_overrides.pop(_SqlDependency.__call__, None)
+    app.dependency_overrides.pop(_get_app_sql, None)
 
 
 @pytest.fixture

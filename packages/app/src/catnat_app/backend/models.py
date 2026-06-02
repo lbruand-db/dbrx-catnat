@@ -31,18 +31,3 @@ class Layer(BaseModel):
 
 class LayerListOut(BaseModel):
     layers: list[Layer]
-
-
-class KeplerDatasetOut(BaseModel):
-    """Kepler-loadable dataset.
-
-    Shape matches what `@kepler.gl/processors.processRowObject` expects —
-    `rows` is a list of dicts keyed by `fields`. Each h3 cell carries the
-    portfolio rollup so Kepler's H3 layer can render exposure heatmaps
-    without any client-side joining.
-    """
-
-    id: str
-    label: str
-    fields: list[str]
-    rows: list[dict[str, str | int | float | None]]
