@@ -1,13 +1,36 @@
 import os
+from collections.abc import AsyncIterator
+from typing import Any
 
 from databricks.sdk.service.iam import User as UserOut
 from databricks.sdk.service.sql import StatementParameterListItem, StatementState
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
+from .agent import run_agent, sse
 from .app_sql import AppSqlDependency
 from .core import Dependencies, create_router
 from .models import Layer, LayerListOut, VersionOut
 
 router = create_router()
+
+
+class ChatMessage(BaseModel):
+    """One turn in the chat history (OpenAI shape, minus system).
+
+    Server-side we prepend the system prompt — the FE never has to know
+    what it is, and prompt edits don't require an FE redeploy.
+    """
+
+    role: str
+    content: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
+    tool_call_id: str | None = None
+    name: str | None = None
+
+
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage]
 
 
 def _catalog() -> str:
@@ -45,9 +68,7 @@ def list_layers(sql: AppSqlDependency) -> LayerListOut:
     response = sql.execute_statement(
         statement=_LAYERS_SQL,
         wait_timeout="30s",
-        parameters=[
-            StatementParameterListItem(name="catalog", value=_catalog(), type="STRING")
-        ],
+        parameters=[StatementParameterListItem(name="catalog", value=_catalog(), type="STRING")],
     )
     if not response.status or response.status.state != StatementState.SUCCEEDED:
         err = response.status.error if response.status else None
@@ -70,3 +91,21 @@ def list_layers(sql: AppSqlDependency) -> LayerListOut:
         for r in (rows or [])
     ]
     return LayerListOut(layers=layers)
+
+
+@router.post("/chat", operation_id="chat")
+async def chat(request: ChatRequest) -> StreamingResponse:
+    """Stream agent SSE events for one chat turn.
+
+    The body is the prior conversation in OpenAI shape (system prompt is
+    prepended server-side). Response is `text/event-stream` with events
+    `delta`, `tool_call`, `tool_result`, `done`, `error` (see
+    `backend/agent/events.py` for shapes).
+    """
+    payload_messages = [m.model_dump(exclude_none=True) for m in request.messages]
+
+    async def event_source() -> AsyncIterator[str]:
+        async for event in run_agent(payload_messages):
+            yield sse(event)
+
+    return StreamingResponse(event_source(), media_type="text/event-stream")

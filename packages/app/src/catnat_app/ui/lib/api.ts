@@ -1,5 +1,5 @@
-import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
-import type { UseQueryOptions, UseSuspenseQueryOptions } from "@tanstack/react-query";
+import { useQuery, useSuspenseQuery, useMutation } from "@tanstack/react-query";
+import type { UseQueryOptions, UseSuspenseQueryOptions, UseMutationOptions } from "@tanstack/react-query";
 export class ApiError extends Error {
     status: number;
     statusText: string;
@@ -11,6 +11,16 @@ export class ApiError extends Error {
         this.statusText = statusText;
         this.body = body;
     }
+}
+export interface ChatMessage {
+    content?: string | null;
+    name?: string | null;
+    role: string;
+    tool_call_id?: string | null;
+    tool_calls?: Record<string, unknown>[] | null;
+}
+export interface ChatRequest {
+    messages: ChatMessage[];
 }
 export interface ComplexValue {
     display?: string | null;
@@ -68,6 +78,42 @@ export interface ValidationError {
 }
 export interface VersionOut {
     version: string;
+}
+export const chat = async (data: ChatRequest, options?: RequestInit): Promise<{
+    data: unknown;
+}> =>{
+    const res = await fetch("/api/chat", {
+        ...options,
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            ...options?.headers
+        },
+        body: JSON.stringify(data)
+    });
+    if (!res.ok) {
+        const body = await res.text();
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(body);
+        } catch  {
+            parsed = body;
+        }
+        throw new ApiError(res.status, res.statusText, parsed);
+    }
+    return {
+        data: await res.json()
+    };
+};
+export function useChat(options?: {
+    mutation?: UseMutationOptions<{
+        data: unknown;
+    }, ApiError, ChatRequest>;
+}) {
+    return useMutation({
+        mutationFn: (data)=>chat(data),
+        ...options?.mutation
+    });
 }
 export interface CurrentUserParams {
     "X-Forwarded-Host"?: string | null;
