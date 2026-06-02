@@ -11,7 +11,7 @@ the three CatNat perils (flood, drought, storm). Phase 0 (data foundation) is
 in progress; the eventual demo is an "agentic GIS" with Leaflet + Kepler.gl
 panes driven by an MCP-backed LLM agent over Unity Catalog data.
 
-**Phases 0, 0.5 and 1 closed** — see
+**Phases 0, 0.5, 1, 2, 3 closed.** See
 [`SPECS/PHASE_0_RETROSPECTIVE.md`](SPECS/PHASE_0_RETROSPECTIVE.md) for the
 data-foundation end-state, and [`SPECS/BENCHMARKS.md`](SPECS/BENCHMARKS.md)
 for the P1 timing numbers (6/6 queries < 1 s on a Small Serverless SQL WH).
@@ -19,29 +19,59 @@ We have **3 hazard layers + 1 reference layer + synthetic portfolio + a
 layer registry**: RGA, PPRI, TRI, IGN BD TOPO communes (dept 069 Rhône via
 [`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks)), plus
 `portfolio_policies` (~5k sample / 500k full), a hand-seeded `events`
-table, and `catnat_silver.layer_index` cataloguing everything for the
-future MCP `list_layers` tool. Windstorms are deferred (SPEC §10.6);
-`portfolio_claims` is Phase 2 work.
+table, and `catnat_silver.layer_index` cataloguing everything. Windstorms
+are deferred (SPEC §10.6); `portfolio_claims` is later work.
 
 Run `uv run catnat bench --out SPECS/BENCHMARKS.md` any time the gold
 layout changes — the report regenerates with pass/fail per query against
 the <1 s target.
 
-**Phase 2 (app scaffold) is in progress.** Lives under `packages/app/`
-as a uv workspace member, scaffolded with [apx](https://github.com/databricks-solutions/apx).
-React 19 + Vite + TypeScript (strict mode) on the frontend, FastAPI on
-the backend. Lint/format: **Biome** (single tool — `bunx @biomejs/biome
-check src/catnat_app/ui`). Frontend tests: **Vitest** + React Testing
-Library (`bunx vitest run`). Backend tests: `pytest` (FastAPI
-TestClient with dependency overrides for `_SqlDependency.__call__`).
+**Phase 2 (app scaffold) ✅.** Lives under `packages/app/` as a uv
+workspace member, scaffolded with [apx](https://github.com/databricks-solutions/apx).
+React 18 + Vite + TypeScript (strict mode) on the frontend, FastAPI on
+the backend. Lint/format: **Biome** for frontend, **ruff** for Python.
+Frontend tests: **Vitest** + React Testing Library (`bunx vitest run`).
+Backend tests: `pytest` (FastAPI TestClient with dependency overrides
+for `_get_app_sql`).
 
-Three panes today: Leaflet (imperative — direct map handle for future
-MCP layer-ops), Kepler stub (real integration in 2.5), chat shell
-(agent in Phase 4). The `/api/layers` endpoint reads
-`catnat_silver.layer_index` via the user's OBO token.
+Two panes today: Leaflet (imperative — direct map handle for the MCP
+`add_layer`/`style_layer` tools in P4), chat shell (agent in P4). The
+Kepler pane attempted in P2.5 was removed (react-palm React-16 reconciler
+fights React 19, and the analytical view didn't earn its weight).
+`/api/layers` reads `catnat_silver.layer_index` via the app SP — the
+OBO `sql`-scope path never minted a working token on this workspace
+despite `user_api_scopes: ['sql']`, so we fall back to SP credentials.
+The app SP holds `USE CATALOG` + `USE SCHEMA` + `SELECT` on
+`catnat_silver`/`catnat_gold`.
 
 `apx frontend build` runs Vite under the hood; we keep our own
 `vitest.config.ts` separate to own the test environment.
+
+**Phase 3 (MCP server) ✅.** FastMCP server mounted at `/mcp` on the
+same FastAPI app, HTTP/SSE transport (SPEC §10.3). Five tools live in
+`src/catnat_app/backend/mcp/`:
+
+- `list_layers` — every `is_displayable=true` row of `layer_index`.
+- `query_layer(layer_id, bbox?, where?, limit?)` — constrained SELECT
+  with bbox + AND-joined equality predicates; binary geometries projected
+  to GeoJSON, H3 cells to hex strings.
+- `intersect_layer(layer_id, geom_wkt)` — `ST_Intersects` join against
+  the layer's `geom_column`.
+- `nearest(layer_id, point_wkt, k)` — k-NN by `ST_Distance`.
+- `buffer(geom_wkt, meters)` — `ST_Buffer` wrapper; returns WKT.
+
+Allowlist (`mcp/allowlist.py`) enforces that every tool call resolves to
+a layer that is both displayable AND points at a table in
+`catnat_silver`/`catnat_gold`. SQL builders are in `mcp/sql_templates.py`
+— pure parameterised SQL, no f-string interpolation of user data.
+Tests: 14 SQL-builder unit + 5 allowlist + 9 end-to-end via the
+in-memory MCP client (`mcp.shared.memory.create_connected_server_and_client_session`).
+
+UI-mutating tools (`add_layer`, `style_layer`, `zoom_to`,
+`open_kepler_view`) defer to P4 since they need a server→browser channel
+that pairs with the agent loop. Spilling overflow results to
+session-scoped UC tables (SPEC §5.4) is a P6 polish item — for now
+queries are capped at 500 rows inline.
 
 Runnable sample queries showing the cross-layer H3 join pattern live in
 [`notebooks/queries/`](notebooks/queries/) — start there to get a feel for

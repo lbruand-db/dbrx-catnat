@@ -11,13 +11,11 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi.testclient import TestClient
-
-from databricks.sdk.service.sql import StatementState
-
 from catnat_app.backend.app import app
 from catnat_app.backend.app_sql import _get_app_sql
 from catnat_app.backend.core.sql import Sql
+from databricks.sdk.service.sql import StatementState
+from fastapi.testclient import TestClient
 
 
 def _make_sql_stub(rows: list[list[str | bool | None]]) -> Sql:
@@ -52,12 +50,27 @@ def client() -> TestClient:
 def test_layers_endpoint_projects_rows_to_layer_models(client: TestClient) -> None:
     rows = [
         [
-            "hazard_rga_h3", "cat.catnat_gold.hazard_rga_h3", "drought", "gold",
-            "h3_r9_cell", "h3", None, "Etalab 2.0", True, "RGA H3 r=9 cells",
+            "hazard_rga_h3",
+            "cat.catnat_gold.hazard_rga_h3",
+            "drought",
+            "gold",
+            "h3_r9_cell",
+            "h3",
+            None,
+            "Etalab 2.0",
+            True,
+            "RGA H3 r=9 cells",
         ],
         [
-            "hazard_ppri_communes", "cat.catnat_silver.hazard_ppri_communes", "flood",
-            "silver", "polygon", None, "geometry", "Etalab 2.0", False,
+            "hazard_ppri_communes",
+            "cat.catnat_silver.hazard_ppri_communes",
+            "flood",
+            "silver",
+            "polygon",
+            None,
+            "geometry",
+            "Etalab 2.0",
+            False,
             "PPRI commune footprints (silver, polygon).",
         ],
     ]
