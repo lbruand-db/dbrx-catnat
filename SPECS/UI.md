@@ -308,19 +308,26 @@ Edge cases:
 ### 5.2 Checkpoints
 
 Conversation-level snapshots — named cursors into the command stack.
+Two flavours, both backed by the storage split in §5.4:
 
-- Auto-checkpoint after each agent turn finishes: `turn_<n>`.
-- User can `/checkpoint <name>` to label ("before-the-bbox-experiment").
-- "Restore to checkpoint" rewinds the stack to that pointer + clears
-  forward.
-- "Fork from here" creates a new `session_id` with a copy of the
-  command stack up to the pointer (a new conversation diverging from
-  this point — same pattern as
+- **Auto-checkpoint** after each agent turn finishes (`turn_<n>`).
+  Cheap, automatic, lives only in UC Delta. Used for granular
+  "restore last 3 turns" undo.
+- **Named snapshot** (`/checkpoint <name>` or ⌘S). Explicit user
+  action. Writes a full session JSON to a per-user Git repo (§5.4)
+  — durable, diffable, shareable.
+
+Operations:
+
+- **Restore to checkpoint** rewinds the stack to that pointer + clears
+  forward. Works on either flavour.
+- **Fork from here** creates a new `session_id` with a copy of the
+  command stack up to the pointer (same pattern as
   [ChatGraPhT's branchable dialogues](https://arxiv.org/pdf/2512.22790)).
+  If the checkpoint is a named snapshot, forks materialise as a Git
+  branch in the same repo (§5.4.4).
 
-Storage: command stream serialises to a UC table
-`catnat_silver.chat_sessions` keyed by `session_id`, one row per
-command. Replay is deterministic given the same starting `MapState`.
+Replay is deterministic given the same starting `MapState`.
 
 ### 5.3 Reset
 
@@ -328,6 +335,119 @@ Big red "Reset map" affordance. Drops every command, returns to default
 basemap-only view, clears selection / drawings / filters. The agent
 sees a synthetic turn "_user reset the map_" so it doesn't continue
 referencing layers that no longer exist.
+
+A reset is itself a Command in the stack, so it can be undone like
+anything else. Named snapshots (§5.4) are unaffected by reset — they
+live in Git, independent of the current session.
+
+### 5.4 Sharing & versioning via Git
+
+Two storage layers, two roles. Mixing them gives the pitch ("we
+versioned the analysis like code") without bending Git to be a
+runtime-state engine.
+
+| Concern | Where it lives | Cadence |
+|---|---|---|
+| Active session — every command, autosaved | `catnat_silver.chat_sessions` (UC Delta) | Every command — fast write, no Git in the hot path |
+| Named snapshots — "save points" the user explicitly creates | A per-user Git repo (Databricks Repos by default) | User-initiated only — ⌘S or `/checkpoint <message>` |
+
+This is the Jupyter split: the kernel holds *runtime* state, the
+notebook file in Git holds *artefact* state. Two persistence models,
+clean roles, no merge nightmare. Concurrent editing of the same
+session is not supported in v1, which means we never trigger a Git
+merge — we never have to define what merging two divergent map
+states should mean.
+
+#### 5.4.1 What's in a snapshot
+
+A snapshot is one JSON document committed as a single file
+`sessions/<session_id>.catnat.json`:
+
+```json
+{
+  "schema_version": 1,
+  "session_id": "01H...",
+  "saved_at": "2026-06-03T07:45:55Z",
+  "saved_by": "lucas.bruand@databricks.com",
+  "message": "before the storm experiment",
+  "parent_snapshot": "01H...prev...",
+  "map_state": { /* the §4.2 MapState shape, fully serialised */ },
+  "command_log": [ /* every Command since session start */ ]
+}
+```
+
+`map_state` lets a reader rebuild the live UI in one step;
+`command_log` lets a reviewer replay the analysis turn-by-turn or
+fork from any earlier point. The two are redundant but cheap — JSON
+gzips well, sessions are small (tens of KB even for a busy 30-min
+turn).
+
+#### 5.4.2 Where the repo lives
+
+Default: **Databricks Repos**, one repo per user
+(`catnat-sessions-<sso_slug>`), created on first save. Gives us IAM,
+sharing UI, and storage quotas for free.
+
+Escape hatch: a bare repo on a UC volume
+(`catnat_silver.session_repos.<user>/`) for workspaces without Repos
+enabled. Same JSON file format; lose the sharing UI, keep the
+versioning.
+
+External GitHub / GitLab as the commit target is out of scope for v1
+— the PAT plumbing and corporate-firewall edge cases aren't worth the
+demo effort. A user can always `git clone` their Repos URL and push
+to their own host manually.
+
+#### 5.4.3 Identity rules
+
+- **Only user-authored commits** land in Git. The agent never commits
+  silently on the user's behalf — that confuses the audit trail and
+  the regulator reading it later.
+- Per-command attribution to `"user"` vs `"agent"` lives inside the
+  `command_log` JSON (see `Command.source` in §4.1), not in commit
+  metadata.
+- Commit message defaults to the snapshot label the user supplied; if
+  the user omits one, default to a timestamped placeholder
+  (`"snapshot 14:32"`).
+
+#### 5.4.4 Branching = forks
+
+"Fork from this snapshot" creates a new branch (`fork/<short_id>`) in
+the same repo, with a `parent_snapshot` pointer in the JSON. The user
+can keep working on the new branch or switch back. Branches are cheap;
+we don't try to limit how many.
+
+Sharing a fork = sharing the branch URL. The recipient gets read-only
+access by default (Databricks Repos handles the permission). No PR
+review workflow in v1 — branches are for divergence, not merge.
+
+#### 5.4.5 Diff viewer
+
+A small in-app viewer renders `git diff` between two snapshots as a
+human-readable changelog grouped by `Command.kind`:
+
+> **Added layers**: hazard_ppri_communes (237 features)
+> **Removed layers**: (none)
+> **Restyled**: hazard_ppri_communes — fill color #1f77b4 → #ff0000
+> **Drew**: 1 polygon (buffer of POINT(4.85 45.75) by 5 km)
+> **Agent turns**: 3 (8 features added to the conversation)
+
+The viewer reads the JSON diff and groups changes by category. Power
+users can fall back to raw `git diff` in their terminal — it's a real
+repo.
+
+#### 5.4.6 What §5.4 explicitly defers
+
+- **Real-time collaboration / concurrent editing** — one writer per
+  session in v1. Two users on the same branch is undefined behaviour;
+  CRDTs / merge resolution for spatial state are out of scope.
+- **External Git hosts** as commit targets — Databricks Repos (or UC
+  volume bare repo) only in v1.
+- **Auto-commits per command** — Git is reserved for explicit user
+  saves. Every command still autosaves to Delta; that's the cheap
+  layer.
+- **Pull-request review workflow** — branches can be shared, but
+  there is no merge UI.
 
 ---
 
@@ -512,10 +632,14 @@ stable artifact path; rollback is one redeploy.
   pipeline; rollback by reverting the SQL notebook.
 
 ### 9.3 Session rollback (per-user)
-Two granularities, both already in §5:
+Three granularities, all from §5:
 
-- **Operation-level**: undo / redo from the command stack.
-- **Turn-level**: restore-to-checkpoint, fork-from-checkpoint.
+- **Operation-level**: undo / redo from the command stack
+  (Cmd+Z / Cmd+Shift+Z, §5.1).
+- **Turn-level**: restore to an auto-checkpoint
+  (`catnat_silver.chat_sessions` in Delta, §5.2).
+- **Snapshot-level**: `git checkout <commit>` on a per-user repo —
+  durable across sessions, diffable, shareable (§5.4).
 
 There is no "global undo" that can rewind another user — single-user
 sessions only.
@@ -557,26 +681,25 @@ it misbehaves.
   no for v1, optional opt-in later. Surprise-talk feels Clippy-grade
   bad until proven otherwise.
   Yes, clippy bad. forget about it.
-- **Drawn geometries persistence across sessions?** Lean: yes, write
-  to `catnat_silver.drawings` keyed by user. Restored on next visit.
-  yes we will need persistence across sessions. We will need to think
-  about how user share their work as well. Git-integration could be important
+- **Drawn geometries persistence across sessions?** ✓ Decided in §5.4.
+  Drawings live inside the session JSON, persisted to Delta on every
+  command and to a per-user Git repo on user-requested save. Sharing
+  = sharing the repo / branch.
 - **Inline mini-map previews of features the agent references?**
   When the agent says "in Avignon", should the chat render a tiny
   thumbnail? Lean: yes for `feature_id` references, no for
   free-text geographical names (too easy to be wrong).
-  ok
-- **Undo granularity vs turn granularity.** Today P4.3 gives only
-  granular undo. Should "undo turn" be a separate hotkey (undo the
-  agent's last 5 actions atomically)? Lean: yes once turn boundaries
-  are explicitly modelled as checkpoints (§5.2).
-  yes turn boundaries into explicitly modelled checkpoints
-- **Branching conversations as a first-class UX**, or just a "save
-  state" affordance? Lean: defer the branching UI to P6 polish.
-  it is a good question. can we rely on git for this ?
-- **How do we handle layers the agent adds that the user wants to
-  keep across resets?** A "pin layer" affordance. Defer.
-  Good question. we need to think about this. Git is part of the answer to me
+- **Undo turn vs undo command.** ✓ Decided in §5.2. Granular undo
+  stays the default (Cmd+Z); turn boundaries are explicitly modelled
+  as auto-checkpoints, so "restore last turn" is a separate
+  affordance, not a Cmd+Z multi-press.
+- **Branching conversations as a first-class UX?** ✓ Decided in
+  §5.4.4. Branches are real Git branches in the per-user repo. No PR
+  merge UI in v1 — branches are for divergence, sharing is a URL.
+- **Pinned layers across resets** — open. A "pin layer" affordance
+  marks a `LayerState.pinned = true` so reset skips it. Persistence
+  follows the same model as drawings (§5.4). Defer the UI; the data
+  model is ready.
 
 ---
 
@@ -589,9 +712,9 @@ SPEC.md §7 phase table:
 |---|---|
 | P4.3 (done) | Forward channel — `add_layer` / `remove_layer` / `zoom_to` / `style_layer`. |
 | P4.5 | Lakebase tile serving — `add_layer` switches to tile-URL payload (§3.1). No UI.md changes required. |
-| P5 | Reverse channel implicit context (§3.2.1) + extended forward ops (§3.1 gaps). Explicit `@reference` syntax. |
-| P6 | Undo / redo / checkpoints (§5). Long-running task pattern (§6) for the multi-event intersect demo step. Golden trace test harness (§8.3). |
-| Post-v1 | Branching conversations, drawn-geometry persistence, voice, mobile. |
+| P5 | Reverse channel implicit context (§3.2.1) + extended forward ops (§3.1 gaps). Explicit `@reference` syntax. Auto-checkpoint to Delta after every agent turn (§5.2). |
+| P6 | Undo / redo from the command stack (§5.1). Named-snapshot save & restore to per-user Git repo (§5.4), incl. branch / fork UI and the diff viewer. Long-running task pattern (§6) for the multi-event intersect demo step. Golden trace test harness (§8.3). |
+| Post-v1 | Real-time collaboration, external Git hosts, pull-request review workflow, voice, mobile. |
 
 ---
 
