@@ -48,6 +48,27 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
+      # The committed bun.lock pins package URLs at
+      # `npm-proxy.dev.databricks.com` — the Databricks-internal mirror
+      # that every dev on our network reaches via `~/.npmrc`. CI runners
+      # can't reach it (it's behind the corporate boundary), so we
+      # rewrite to the public registry before installing. The package
+      # integrity hashes in the lockfile are content-based, so the
+      # public registry serves byte-identical tarballs that pass
+      # `--frozen-lockfile` verification.
+      #
+      # Also clobber the project-local `.npmrc` for the same reason —
+      # without overriding it, `bun install` walks back to the proxy.
+      - name: Normalise lockfile + .npmrc for CI runners
+        run: |
+          sed -i 's|https://npm-proxy.dev.databricks.com/|https://registry.npmjs.org/|g' bun.lock
+          echo "registry=https://registry.npmjs.org/" > .npmrc
+          if grep -q "npm-proxy.dev.databricks.com" bun.lock; then
+            echo "::error::bun.lock still has internal-proxy URLs after sed"
+            exit 1
+          fi
+
       - run: bun install --frozen-lockfile
       - name: Biome lint + format check
         run: bunx @biomejs/biome check src/catnat_app/ui
