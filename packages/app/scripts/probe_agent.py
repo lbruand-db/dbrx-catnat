@@ -116,26 +116,21 @@ async def probe(message: str) -> int:
                         marker = "ERROR" if is_err else "ok"
                         print(
                             f"[+{elapsed:5.2f}s] tool_result      [{marker}] "
-                            f"{payload.get('name','?')} → {_truncate(payload.get('result'), 240)}"
+                            f"{payload.get('name', '?')} → {_truncate(payload.get('result'), 240)}"
                         )
                     elif event == "map_op":
                         op = payload.get("op", "?")
                         details = {
-                            k: v
-                            for k, v in payload.items()
-                            if k not in {"geojson", "geom_geojson"}
+                            k: v for k, v in payload.items() if k not in {"geojson", "geom_geojson"}
                         }
                         if "geojson" in payload:
                             details["geojson_features"] = len(
                                 payload["geojson"].get("features", [])
                             )
                         if "geom_geojson" in payload:
-                            details["geom_geojson_type"] = payload[
-                                "geom_geojson"
-                            ].get("type")
+                            details["geom_geojson_type"] = payload["geom_geojson"].get("type")
                         print(
-                            f"[+{elapsed:5.2f}s] map_op           {op}: "
-                            f"{_truncate(details, 200)}"
+                            f"[+{elapsed:5.2f}s] map_op           {op}: {_truncate(details, 200)}"
                         )
                     elif event == "done":
                         final_text = payload.get("final_text", "")

@@ -12,7 +12,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import httpx
-
 from catnat_app.backend.agent.client import _DatabricksTokenAuth
 
 

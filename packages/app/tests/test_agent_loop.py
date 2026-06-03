@@ -136,6 +136,29 @@ def _stub_sql(rows: list[list[object]]) -> Sql:
 
 
 @pytest.mark.anyio("asyncio")
+async def test_context_block_is_folded_into_system_prompt() -> None:
+    """The reverse-channel `context` (UI.md §3.2.1) must reach the model
+    via the system prompt, not via a tool call."""
+    client = _ScriptedClient(iterations=[[_chunk_text("ok")]])
+    async for _ in run_agent(
+        messages=[{"role": "user", "content": "hi"}],
+        context={
+            "viewport": {"bbox": [4.5, 45.4, 5.2, 46.1], "zoom": 11, "center": [4.85, 45.75]},
+            "active_layers": [{"layer_id": "hazard_ppri_communes", "row_count": 237}],
+        },
+        client_factory=lambda: client,  # type: ignore[arg-type]
+    ):
+        pass
+    # The first FMAPI call carries the augmented system message.
+    sys_msg = client.calls[0]["messages"][0]
+    assert sys_msg["role"] == "system"
+    content = sys_msg["content"]
+    assert "Current map state" in content
+    assert "bbox=[4.500" in content
+    assert "hazard_ppri_communes (237 features)" in content
+
+
+@pytest.mark.anyio("asyncio")
 async def test_text_only_turn_emits_delta_and_done(monkeypatch: pytest.MonkeyPatch) -> None:
     """No tool calls: agent streams text, ends with `done`."""
     client = _ScriptedClient(iterations=[[_chunk_text("Bonjour "), _chunk_text("Lucas.")]])

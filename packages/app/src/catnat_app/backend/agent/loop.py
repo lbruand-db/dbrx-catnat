@@ -128,16 +128,57 @@ def _result_payload(tool_result: Any) -> tuple[Any, bool]:
     return None, is_error
 
 
+def _format_context(context: dict[str, Any] | None) -> str:
+    """Render the FE-supplied map state as a short system-prompt suffix.
+
+    The reverse-channel block (UI.md §3.2.1) — viewport, active layers,
+    eventually selection / drawings. Keep it terse: the LLM doesn't
+    need pretty JSON, just enough to know what the user is looking at.
+    """
+    if not context:
+        return ""
+    lines = ["Current map state (what the user sees right now):"]
+    vp = context.get("viewport")
+    if vp:
+        bbox = vp.get("bbox")
+        zoom = vp.get("zoom")
+        center = vp.get("center")
+        parts = []
+        if bbox and len(bbox) == 4:
+            parts.append(f"bbox=[{bbox[0]:.3f}, {bbox[1]:.3f}, {bbox[2]:.3f}, {bbox[3]:.3f}]")
+        if zoom is not None:
+            parts.append(f"zoom={zoom:g}")
+        if center and len(center) == 2:
+            parts.append(f"center=({center[0]:.3f}, {center[1]:.3f})")
+        if parts:
+            lines.append(f"- Viewport: {', '.join(parts)}")
+    active = context.get("active_layers") or []
+    if active:
+        labels = []
+        for layer in active:
+            label = layer.get("layer_id", "?")
+            count = layer.get("row_count")
+            labels.append(f"{label}" + (f" ({count} features)" if count is not None else ""))
+        lines.append(f"- Active agent-added layers: {', '.join(labels)}")
+    else:
+        lines.append("- Active agent-added layers: none")
+    return "\n".join(lines)
+
+
 async def run_agent(
     messages: list[dict[str, Any]],
     *,
+    context: dict[str, Any] | None = None,
     client_factory: Callable[[], AsyncOpenAI] = get_client,
     model: str | None = None,
 ) -> AsyncIterator[AgentEvent]:
     """Run one agent turn against the catnat MCP server.
 
     `messages` is the prior conversation in OpenAI chat shape (no system
-    prompt — we prepend ours). Yields events the route streams as SSE.
+    prompt — we prepend ours). `context` is the FE's snapshot of the
+    current map state (viewport, active layers, etc.) — folded into the
+    system prompt so the agent reads it without a tool call. Yields
+    events the route streams as SSE.
     """
     client = client_factory()
     used_model = model or get_model()
@@ -147,8 +188,13 @@ async def run_agent(
         tools_response = await mcp_session.list_tools()
         openai_tools = [_mcp_to_openai_tool(t) for t in tools_response.tools]
 
+        system_prompt = SYSTEM_PROMPT
+        context_block = _format_context(context)
+        if context_block:
+            system_prompt = f"{SYSTEM_PROMPT}\n\n{context_block}"
+
         history: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             *messages,
         ]
 
@@ -215,9 +261,7 @@ async def run_agent(
                 except json.JSONDecodeError:
                     args = {}
 
-                ev_tc = AgentEvent(
-                    "tool_call", {"id": tc_id, "name": tool_name, "arguments": args}
-                )
+                ev_tc = AgentEvent("tool_call", {"id": tc_id, "name": tool_name, "arguments": args})
                 _trace_emit(ev_tc, t0)
                 yield ev_tc
 

@@ -70,28 +70,22 @@ def _projection(layer: AllowedLayer) -> str:
     return "*"
 
 
-def build_query_layer(
+def build_filter_clauses(
     layer: AllowedLayer,
     *,
     bbox: tuple[float, float, float, float] | None = None,
     where: dict[str, str | int | float | bool] | None = None,
-    limit: int = 100,
-) -> BuiltStatement:
-    """Build the SQL for `query_layer(layer_id, bbox, where, limit)`.
+) -> tuple[list[str], list[StatementParameterListItem]]:
+    """Build the WHERE conditions + parameters for a layer-scoped SELECT.
 
-    - `bbox` is `(min_lon, min_lat, max_lon, max_lat)`. Only supported on
-      layers carrying a `geom_column`; H3-grain layers reject with
-      `ValueError` (use `intersect_layer` for those once bbox→H3
-      polyfill is wired).
-    - `where` is `{column: value}` AND-joined equality predicates. Column
-      names go through `_safe_identifier`; values bind as parameters
-      typed by Python type.
-    - `limit` is clamped to `[1, QUERY_LAYER_MAX_ROWS]`.
+    Shared by `build_query_layer` and `ui_tools.add_layer_impl` so the
+    bbox / equality-predicate plumbing has one implementation. Returns
+    a pair of (condition strings to AND-join, bind params to pass to
+    `execute_statement`). Column names go through `_safe_identifier`;
+    values bind as parameters typed by Python type.
     """
     conditions: list[str] = []
-    params: list[StatementParameterListItem] = [
-        StatementParameterListItem(name="table_fq", value=layer.table_fq, type="STRING"),
-    ]
+    params: list[StatementParameterListItem] = []
 
     if bbox is not None:
         if not layer.geom_column:
@@ -119,6 +113,30 @@ def build_query_layer(
                 ptype, pval = "STRING", str(val)
             params.append(StatementParameterListItem(name=pname, value=pval, type=ptype))
 
+    return conditions, params
+
+
+def build_query_layer(
+    layer: AllowedLayer,
+    *,
+    bbox: tuple[float, float, float, float] | None = None,
+    where: dict[str, str | int | float | bool] | None = None,
+    limit: int = 100,
+) -> BuiltStatement:
+    """Build the SQL for `query_layer(layer_id, bbox, where, limit)`.
+
+    - `bbox` is `(min_lon, min_lat, max_lon, max_lat)`. Only supported on
+      layers carrying a `geom_column`; H3-grain layers reject with
+      `ValueError` (use `intersect_layer` for those once bbox→H3
+      polyfill is wired).
+    - `where` is `{column: value}` AND-joined equality predicates.
+    - `limit` is clamped to `[1, QUERY_LAYER_MAX_ROWS]`.
+    """
+    conditions, filter_params = build_filter_clauses(layer, bbox=bbox, where=where)
+    params: list[StatementParameterListItem] = [
+        StatementParameterListItem(name="table_fq", value=layer.table_fq, type="STRING"),
+        *filter_params,
+    ]
     where_sql = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     capped = max(1, min(limit, QUERY_LAYER_MAX_ROWS))
     statement = (
@@ -219,6 +237,7 @@ __all__ = [
     "BuiltStatement",
     "QUERY_LAYER_MAX_ROWS",
     "build_buffer",
+    "build_filter_clauses",
     "build_intersect_layer",
     "build_nearest",
     "build_query_layer",

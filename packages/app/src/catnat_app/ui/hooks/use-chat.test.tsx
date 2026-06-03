@@ -149,6 +149,44 @@ describe("useChat", () => {
         expect(ops[0].layer_id).toBe("x");
     });
 
+    it("attaches the context block from getContext() to the request body", async () => {
+        const fetchSpy = mockFetch(() =>
+            streamResponse('event: done\ndata: {"final_text":""}\n\n'),
+        );
+        const { result } = renderHook(() =>
+            useChat({
+                getContext: () => ({
+                    viewport: {
+                        bbox: [4.5, 45.4, 5.2, 46.1],
+                        zoom: 11,
+                        center: [4.85, 45.75],
+                    },
+                    active_layers: [{ layer_id: "hazard_ppri_communes" }],
+                }),
+            }),
+        );
+        await act(async () => {
+            await result.current.send("hi");
+        });
+        const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+        expect(body.context).toBeDefined();
+        expect(body.context.viewport.zoom).toBe(11);
+        expect(body.context.viewport.bbox).toEqual([4.5, 45.4, 5.2, 46.1]);
+        expect(body.context.active_layers[0].layer_id).toBe("hazard_ppri_communes");
+    });
+
+    it("omits the context block when getContext returns null", async () => {
+        const fetchSpy = mockFetch(() =>
+            streamResponse('event: done\ndata: {"final_text":""}\n\n'),
+        );
+        const { result } = renderHook(() => useChat({ getContext: () => null }));
+        await act(async () => {
+            await result.current.send("hi");
+        });
+        const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+        expect(body.context).toBeUndefined();
+    });
+
     it("ignores empty / whitespace-only sends", async () => {
         const fetchSpy = mockFetch(() => streamResponse("event: done\ndata: {}\n\n"));
         const { result } = renderHook(() => useChat());

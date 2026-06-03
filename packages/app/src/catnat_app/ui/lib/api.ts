@@ -12,6 +12,14 @@ export class ApiError extends Error {
         this.body = body;
     }
 }
+export interface ChatActiveLayer {
+    layer_id: string;
+    row_count?: number | null;
+}
+export interface ChatContext {
+    active_layers?: ChatActiveLayer[];
+    viewport?: ChatViewport | null;
+}
 export interface ChatMessage {
     content?: string | null;
     name?: string | null;
@@ -20,7 +28,13 @@ export interface ChatMessage {
     tool_calls?: Record<string, unknown>[] | null;
 }
 export interface ChatRequest {
+    context?: ChatContext | null;
     messages: ChatMessage[];
+}
+export interface ChatViewport {
+    bbox?: number[] | null;
+    center?: number[] | null;
+    zoom?: number | null;
 }
 export interface ComplexValue {
     display?: string | null;

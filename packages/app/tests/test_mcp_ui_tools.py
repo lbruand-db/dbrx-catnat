@@ -141,6 +141,44 @@ def test_add_layer_skips_rows_with_null_or_invalid_geometry() -> None:
     assert len(result["geojson"]["features"]) == 1
 
 
+def test_add_layer_applies_where_filter() -> None:
+    sql = _stub_sql_chain(
+        ([], _allowed_polygon_layer_row()),
+        (["geom_geojson", "code_dep"], [['{"type":"Polygon","coordinates":[]}', "069"]]),
+    )
+    result = add_layer_impl(sql, "cat", "hazard_ppri_communes", where={"code_dep": "069"})
+    assert result["where"] == {"code_dep": "069"}
+    assert result["row_count"] == 1
+
+    # The data query (call #2) must carry `code_dep` as a bound parameter
+    # and NOT inline it into the SQL string.
+    data_call = sql.execute_statement.call_args_list[1]
+    statement = data_call.kwargs["statement"]
+    params = data_call.kwargs["parameters"]
+    assert "`code_dep` = :w_code_dep" in statement
+    assert "069" not in statement  # value flows only via the bind param
+    code_dep_param = next(p for p in params if p.name == "w_code_dep")
+    assert code_dep_param.value == "069"
+    assert code_dep_param.type == "STRING"
+
+
+def test_add_layer_applies_bbox_filter() -> None:
+    sql = _stub_sql_chain(
+        ([], _allowed_polygon_layer_row()),
+        (["geom_geojson"], [['{"type":"Polygon","coordinates":[]}']]),
+    )
+    result = add_layer_impl(sql, "cat", "hazard_ppri_communes", bbox=(4.5, 45.4, 5.2, 46.1))
+    assert result["bbox"] == [4.5, 45.4, 5.2, 46.1]
+
+    # ST_Intersects with bind-parameter WKT must appear in the SQL.
+    data_call = sql.execute_statement.call_args_list[1]
+    statement = data_call.kwargs["statement"]
+    params = data_call.kwargs["parameters"]
+    assert "ST_Intersects(geometry, ST_GeomFromText(:bbox_wkt, 4326))" in statement
+    bbox_param = next(p for p in params if p.name == "bbox_wkt")
+    assert bbox_param.value.startswith("POLYGON((4.5 45.4")
+
+
 def test_add_layer_passes_table_fq_as_parameter_marker() -> None:
     sql = _stub_sql_chain(
         ([], _allowed_polygon_layer_row()),

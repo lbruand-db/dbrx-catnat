@@ -6,7 +6,7 @@ import { ChatPane } from "@/components/catnat/chat-pane";
 import { LeafletPane } from "@/components/catnat/leaflet-pane";
 import { useLayers } from "@/hooks/use-layers";
 import { applyMapOp } from "@/lib/map-dispatcher";
-import type { MapOp } from "@/types/chat";
+import type { ChatContext, MapOp } from "@/types/chat";
 
 export const Route = createFileRoute("/")({
     component: () => <DemoLayout />,
@@ -37,6 +37,27 @@ function DemoLayout() {
         applyMapOp(op, map, agentLayersRef.current);
     }, []);
 
+    // Read the current Leaflet view + the set of agent-added layers at
+    // chat-send time. This is the reverse channel from UI.md §3.2.1 —
+    // the agent learns what the user is looking at without having to
+    // call a tool to find out.
+    const getChatContext = useCallback((): ChatContext | null => {
+        const map = mapRef.current;
+        if (!map) return null;
+        const bounds = map.getBounds();
+        const center = map.getCenter();
+        return {
+            viewport: {
+                bbox: [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()],
+                zoom: map.getZoom(),
+                center: [center.lng, center.lat],
+            },
+            active_layers: Array.from(agentLayersRef.current.keys()).map((layer_id) => ({
+                layer_id,
+            })),
+        };
+    }, []);
+
     return (
         <div className="grid h-screen w-screen grid-cols-[1fr_24rem] overflow-hidden">
             <section
@@ -51,7 +72,7 @@ function DemoLayout() {
                 aria-label="Chat"
                 data-testid="chat-section"
             >
-                <ChatPane onMapOp={handleMapOp} />
+                <ChatPane onMapOp={handleMapOp} getContext={getChatContext} />
             </section>
             {error && (
                 <div className="absolute bottom-4 left-4 rounded-md bg-destructive p-3 text-sm text-destructive-foreground">

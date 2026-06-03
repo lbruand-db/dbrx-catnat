@@ -3,7 +3,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useChat } from "@/hooks/use-chat";
-import type { ChatTurn, MapOp } from "@/types/chat";
+import type { ChatContext, ChatTurn, MapOp } from "@/types/chat";
 import { ToolCallCard } from "./tool-call-card";
 
 /** Suggested first prompts shown when the chat is empty. Tuned to the
@@ -18,6 +18,9 @@ export interface ChatPaneProps {
     /** Forwarded to `useChat` — fires once per `map_op` SSE event so the
      * surrounding layout can mutate the Leaflet map handle. */
     onMapOp?: (op: MapOp) => void;
+    /** Forwarded to `useChat` — read the current map view at send time
+     * so the agent gets the reverse-channel context (UI.md §3.2.1). */
+    getContext?: () => ChatContext | null | undefined;
 }
 
 /**
@@ -28,8 +31,8 @@ export interface ChatPaneProps {
  * interleaved into the assistant turn at the position the agent invoked
  * them.
  */
-export function ChatPane({ onMapOp }: ChatPaneProps = {}) {
-    const { turns, send, isStreaming, error } = useChat({ onMapOp });
+export function ChatPane({ onMapOp, getContext }: ChatPaneProps = {}) {
+    const { turns, send, isStreaming, error } = useChat({ onMapOp, getContext });
     const [draft, setDraft] = useState("");
     const listRef = useRef<HTMLUListElement>(null);
 

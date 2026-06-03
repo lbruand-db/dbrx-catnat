@@ -29,8 +29,37 @@ class ChatMessage(BaseModel):
     name: str | None = None
 
 
+class ChatViewport(BaseModel):
+    """Snapshot of the Leaflet pane's current view at send time."""
+
+    bbox: list[float] | None = None  # [min_lon, min_lat, max_lon, max_lat]
+    zoom: float | None = None
+    center: list[float] | None = None  # [lon, lat]
+
+
+class ChatActiveLayer(BaseModel):
+    """One agent-added layer the user is currently looking at."""
+
+    layer_id: str
+    row_count: int | None = None
+
+
+class ChatContext(BaseModel):
+    """Reverse-channel state attached to every /api/chat POST so the
+    agent reads the user's map view without needing a tool call.
+
+    Per UI.md §3.2.1. The FE projects its `MapState` into this shape
+    (heavy fields like full geojson left behind); the agent loop folds
+    it into the system prompt before the first FMAPI call of the turn.
+    """
+
+    viewport: ChatViewport | None = None
+    active_layers: list[ChatActiveLayer] = []
+
+
 class ChatRequest(BaseModel):
     messages: list[ChatMessage]
+    context: ChatContext | None = None
 
 
 def _catalog() -> str:
@@ -107,9 +136,10 @@ async def chat(request: ChatRequest) -> StreamingResponse:
     streaming response until completion unless asked otherwise.
     """
     payload_messages = [m.model_dump(exclude_none=True) for m in request.messages]
+    context_payload = request.context.model_dump(exclude_none=True) if request.context else None
 
     async def event_source() -> AsyncIterator[str]:
-        async for event in run_agent(payload_messages):
+        async for event in run_agent(payload_messages, context=context_payload):
             yield sse(event)
 
     return StreamingResponse(

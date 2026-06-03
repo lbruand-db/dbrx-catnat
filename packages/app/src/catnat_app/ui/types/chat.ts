@@ -27,6 +27,25 @@ export interface ChatTurn {
     error?: string;
 }
 
+/** Reverse-channel context the FE attaches to every /api/chat POST.
+ * Per UI.md §3.2.1 — the agent reads the user's current map view from
+ * the system prompt instead of asking for it via a tool call. */
+export interface ChatViewport {
+    bbox?: [number, number, number, number]; // [min_lon, min_lat, max_lon, max_lat]
+    zoom?: number;
+    center?: [number, number]; // [lon, lat]
+}
+
+export interface ChatActiveLayer {
+    layer_id: string;
+    row_count?: number;
+}
+
+export interface ChatContext {
+    viewport?: ChatViewport;
+    active_layers?: ChatActiveLayer[];
+}
+
 /** Map-mutating operations the agent can emit via the `map_op` SSE event.
  * Mirrors the payloads from `backend/mcp/ui_tools.py`. */
 export type MapOp =

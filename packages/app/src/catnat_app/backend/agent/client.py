@@ -47,9 +47,7 @@ class _DatabricksTokenAuth(httpx.Auth):
     def __init__(self, ws: WorkspaceClient) -> None:
         self._ws = ws
 
-    def auth_flow(
-        self, request: httpx.Request
-    ) -> Generator[httpx.Request, httpx.Response, None]:
+    def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
         for name, value in self._ws.config.authenticate().items():
             request.headers[name] = value
         yield request

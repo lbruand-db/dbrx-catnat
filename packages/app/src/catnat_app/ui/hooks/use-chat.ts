@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { parseSseStream } from "@/lib/sse";
-import type { ChatTurn, MapOp, ToolCall } from "@/types/chat";
+import type { ChatContext, ChatTurn, MapOp, ToolCall } from "@/types/chat";
 
 /**
  * Talks to `/api/chat` over SSE. Holds the conversation as a list of
@@ -15,6 +15,10 @@ import type { ChatTurn, MapOp, ToolCall } from "@/types/chat";
 export interface UseChatOptions {
     /** Invoked for every `map_op` SSE event. Receives the fully-typed payload. */
     onMapOp?: (op: MapOp) => void;
+    /** Called at send time to read the current map view. Returns the
+     * reverse-channel context the agent will fold into its system
+     * prompt (UI.md §3.2.1). Null/undefined → no context attached. */
+    getContext?: () => ChatContext | null | undefined;
 }
 
 export interface UseChatResult {
@@ -34,10 +38,12 @@ export function useChat(options?: UseChatOptions): UseChatResult {
      * from a consistent snapshot, not a stale closure capture. */
     const turnsRef = useRef<ChatTurn[]>([]);
     turnsRef.current = turns;
-    /** Hold the latest callback in a ref so `send` doesn't need to depend
-     * on it (which would invalidate the memoised function on each render). */
+    /** Hold the latest callbacks in refs so `send` doesn't need to depend
+     * on them (which would invalidate the memoised function on each render). */
     const onMapOpRef = useRef<UseChatOptions["onMapOp"]>(options?.onMapOp);
     onMapOpRef.current = options?.onMapOp;
+    const getContextRef = useRef<UseChatOptions["getContext"]>(options?.getContext);
+    getContextRef.current = options?.getContext;
 
     const send = useCallback(async (text: string) => {
         const trimmed = text.trim();
@@ -66,15 +72,20 @@ export function useChat(options?: UseChatOptions): UseChatResult {
             role: t.role,
             content: t.text,
         }));
+        const context = getContextRef.current?.() ?? undefined;
 
         const updateAssistant = (patch: (t: ChatTurn) => ChatTurn) =>
             setTurns((prev) => prev.map((t) => (t.id === assistantId ? patch(t) : t)));
 
         try {
+            const body: { messages: typeof apiMessages; context?: ChatContext } = {
+                messages: apiMessages,
+            };
+            if (context) body.context = context;
             const resp = await fetch(CHAT_URL, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ messages: apiMessages }),
+                body: JSON.stringify(body),
             });
             if (!resp.ok || !resp.body) {
                 throw new Error(`chat request failed: ${resp.status} ${resp.statusText}`);
