@@ -68,8 +68,11 @@ def _read_layer_rows(
     """SELECT every row of the layer, with geometry projected to WKT.
 
     For v1 we load each layer fully into memory before pushing — fine
-    for dept-069 (each layer is a few thousand rows max). Will need
-    chunked streaming once we extend to full-France datasets.
+    for dept-069 (each layer is a few thousand rows max). The
+    Statement Execution API splits results across chunks (~256 rows
+    each for polygon layers); we have to chase `next_chunk_index` to
+    get the full layer. Skipping that step is how 242 of 496 communes
+    silently went missing on the first mirror run.
     """
     sql = (
         f"SELECT ST_AsText({layer.geom_column}) AS geom_wkt, "
@@ -90,7 +93,16 @@ def _read_layer_rows(
     columns: list[str] = []
     if response.manifest and response.manifest.schema and response.manifest.schema.columns:
         columns = [c.name for c in response.manifest.schema.columns]
-    rows = list(response.result.data_array or []) if response.result else []
+
+    rows: list[list[object]] = list(response.result.data_array or []) if response.result else []
+    next_idx = response.result.next_chunk_index if response.result else None
+    statement_id = response.statement_id
+    while next_idx is not None and statement_id is not None:
+        chunk = ws.statement_execution.get_statement_result_chunk_n(
+            statement_id=statement_id, chunk_index=next_idx
+        )
+        rows.extend(chunk.data_array or [])
+        next_idx = chunk.next_chunk_index
     return columns, rows
 
 
