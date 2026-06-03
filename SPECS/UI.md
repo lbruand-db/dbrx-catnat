@@ -556,20 +556,27 @@ it misbehaves.
   been panning around Lyon — want me to add the PPRI layer?". Lean:
   no for v1, optional opt-in later. Surprise-talk feels Clippy-grade
   bad until proven otherwise.
+  Yes, clippy bad. forget about it.
 - **Drawn geometries persistence across sessions?** Lean: yes, write
   to `catnat_silver.drawings` keyed by user. Restored on next visit.
+  yes we will need persistence across sessions. We will need to think
+  about how user share their work as well. Git-integration could be important
 - **Inline mini-map previews of features the agent references?**
   When the agent says "in Avignon", should the chat render a tiny
   thumbnail? Lean: yes for `feature_id` references, no for
   free-text geographical names (too easy to be wrong).
+  ok
 - **Undo granularity vs turn granularity.** Today P4.3 gives only
   granular undo. Should "undo turn" be a separate hotkey (undo the
   agent's last 5 actions atomically)? Lean: yes once turn boundaries
   are explicitly modelled as checkpoints (§5.2).
+  yes turn boundaries into explicitly modelled checkpoints
 - **Branching conversations as a first-class UX**, or just a "save
   state" affordance? Lean: defer the branching UI to P6 polish.
+  it is a good question. can we rely on git for this ?
 - **How do we handle layers the agent adds that the user wants to
   keep across resets?** A "pin layer" affordance. Defer.
+  Good question. we need to think about this. Git is part of the answer to me
 
 ---
 
