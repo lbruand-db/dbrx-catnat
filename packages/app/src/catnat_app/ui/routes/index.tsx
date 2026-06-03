@@ -6,7 +6,7 @@ import { ChatPane } from "@/components/catnat/chat-pane";
 import { LeafletPane } from "@/components/catnat/leaflet-pane";
 import { useLayers } from "@/hooks/use-layers";
 import { applyMapOp } from "@/lib/map-dispatcher";
-import type { ChatContext, MapOp } from "@/types/chat";
+import type { ChatContext, FeatureSelection, MapOp } from "@/types/chat";
 
 export const Route = createFileRoute("/")({
     component: () => <DemoLayout />,
@@ -26,16 +26,27 @@ function DemoLayout() {
     // forcing a re-render of either pane.
     const mapRef = useRef<LeafletMap | null>(null);
     const agentLayersRef = useRef<Map<string, L.GeoJSON>>(new Map());
+    // Latest feature the user clicked. Held in a ref so the dispatcher's
+    // click handler can update it without forcing a re-render of the
+    // map / chat panes; getChatContext() reads it at send time.
+    const selectionRef = useRef<FeatureSelection | null>(null);
 
     const handleMapReady = useCallback((m: LeafletMap) => {
         mapRef.current = m;
     }, []);
 
-    const handleMapOp = useCallback((op: MapOp) => {
-        const map = mapRef.current;
-        if (!map) return;
-        applyMapOp(op, map, agentLayersRef.current);
+    const handleSelectionChange = useCallback((sel: FeatureSelection | null) => {
+        selectionRef.current = sel;
     }, []);
+
+    const handleMapOp = useCallback(
+        (op: MapOp) => {
+            const map = mapRef.current;
+            if (!map) return;
+            applyMapOp(op, map, agentLayersRef.current, handleSelectionChange);
+        },
+        [handleSelectionChange],
+    );
 
     // Read the current Leaflet view + the set of agent-added layers at
     // chat-send time. This is the reverse channel from UI.md §3.2.1 —
@@ -55,6 +66,7 @@ function DemoLayout() {
             active_layers: Array.from(agentLayersRef.current.keys()).map((layer_id) => ({
                 layer_id,
             })),
+            selection: selectionRef.current,
         };
     }, []);
 

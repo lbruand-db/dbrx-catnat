@@ -159,6 +159,41 @@ async def test_context_block_is_folded_into_system_prompt() -> None:
 
 
 @pytest.mark.anyio("asyncio")
+async def test_selection_in_context_appears_in_system_prompt() -> None:
+    """Reverse-channel selection (a feature the user clicked) reaches
+    the model with key attrs + click coords + the 'treat this/ce truc'
+    routing hint."""
+    client = _ScriptedClient(iterations=[[_chunk_text("ok")]])
+    async for _ in run_agent(
+        messages=[{"role": "user", "content": "c'est quoi ?"}],
+        context={
+            "active_layers": [{"layer_id": "admin_communes"}],
+            "selection": {
+                "layer_id": "admin_communes",
+                "properties": {
+                    "code_insee": "69123",
+                    "nom_officiel": "Lyon",
+                    "code_dep": "69",
+                    "dept": "D069",
+                    "population": "522000",
+                },
+                "latlng": [45.7649, 4.8351],
+            },
+        },
+        client_factory=lambda: client,  # type: ignore[arg-type]
+    ):
+        pass
+    sys = client.calls[0]["messages"][0]["content"]
+    assert "Selection: layer=admin_communes" in sys
+    assert "code_insee='69123'" in sys
+    assert "nom_officiel='Lyon'" in sys
+    # population is not in the key-fields list — should be dropped.
+    assert "population" not in sys
+    assert "(45.7649, 4.8351)" in sys
+    assert "ce truc" in sys or "this" in sys  # routing hint present
+
+
+@pytest.mark.anyio("asyncio")
 async def test_text_only_turn_emits_delta_and_done(monkeypatch: pytest.MonkeyPatch) -> None:
     """No tool calls: agent streams text, ends with `done`."""
     client = _ScriptedClient(iterations=[[_chunk_text("Bonjour "), _chunk_text("Lucas.")]])

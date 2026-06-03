@@ -15,6 +15,12 @@ interface MockVgLayer {
     addTo: ReturnType<typeof vi.fn>;
     setStyle?: ReturnType<typeof vi.fn>;
     _catnatLayerId?: string;
+    on?: ReturnType<typeof vi.fn>;
+    /** Captured by the mock's `.on('click', ...)` so tests can fire it. */
+    _clickHandler?: (e: {
+        latlng: { lat: number; lng: number };
+        layer?: { properties?: Record<string, unknown> };
+    }) => void;
 }
 
 // Install a `L.vectorGrid.protobuf` factory before any test runs. The
@@ -29,6 +35,12 @@ beforeEach(() => {
             addTo: vi.fn().mockReturnThis(),
             setStyle: vi.fn(),
         };
+        // Capture the click handler so we can invoke it from tests.
+        layer.on = vi.fn((kind, handler) => {
+            if (kind === "click") {
+                layer._clickHandler = handler;
+            }
+        });
         return layer as unknown as ManagedLayer;
     });
     (
@@ -183,5 +195,79 @@ describe("applyMapOp", () => {
         );
         // Nothing was added or modified.
         expect(layers.size).toBe(0);
+    });
+
+    it("add_layer wires a click handler that fires onSelectionChange", () => {
+        const onSelectionChange = vi.fn();
+        applyMapOp(
+            {
+                op: "add_layer",
+                layer_id: "hazard_ppri_communes",
+                peril: "flood",
+                tile_url: "/api/tiles/hazard_ppri_communes/{z}/{x}/{y}.pbf",
+                style: {},
+                status: "ok",
+            },
+            map,
+            layers,
+            onSelectionChange,
+        );
+        const layer = layers.get("hazard_ppri_communes") as unknown as MockVgLayer;
+        expect(layer.on).toHaveBeenCalledWith("click", expect.any(Function));
+
+        // Fire the click handler that the dispatcher registered.
+        layer._clickHandler?.({
+            latlng: { lat: 45.764, lng: 4.835 },
+            layer: { properties: { code_insee: "69123", nom_officiel: "Lyon" } },
+        });
+        expect(onSelectionChange).toHaveBeenCalledWith({
+            layer_id: "hazard_ppri_communes",
+            properties: { code_insee: "69123", nom_officiel: "Lyon" },
+            latlng: [45.764, 4.835],
+        });
+    });
+
+    it("click on a feature with no properties does not fire the callback", () => {
+        const onSelectionChange = vi.fn();
+        applyMapOp(
+            {
+                op: "add_layer",
+                layer_id: "x",
+                peril: "flood",
+                tile_url: "/api/tiles/x/{z}/{x}/{y}.pbf",
+                style: {},
+                status: "ok",
+            },
+            map,
+            layers,
+            onSelectionChange,
+        );
+        const layer = layers.get("x") as unknown as MockVgLayer;
+        layer._clickHandler?.({ latlng: { lat: 0, lng: 0 } });
+        expect(onSelectionChange).not.toHaveBeenCalled();
+    });
+
+    it("remove_layer clears the selection callback with null", () => {
+        const onSelectionChange = vi.fn();
+        applyMapOp(
+            {
+                op: "add_layer",
+                layer_id: "x",
+                peril: "flood",
+                tile_url: "/api/tiles/x/{z}/{x}/{y}.pbf",
+                style: {},
+                status: "ok",
+            },
+            map,
+            layers,
+            onSelectionChange,
+        );
+        applyMapOp(
+            { op: "remove_layer", layer_id: "x", status: "ok" },
+            map,
+            layers,
+            onSelectionChange,
+        );
+        expect(onSelectionChange).toHaveBeenCalledWith(null);
     });
 });

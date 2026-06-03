@@ -162,6 +162,32 @@ def _format_context(context: dict[str, Any] | None) -> str:
         lines.append(f"- Active agent-added layers: {', '.join(labels)}")
     else:
         lines.append("- Active agent-added layers: none")
+    selection = context.get("selection")
+    if selection:
+        layer_id = selection.get("layer_id", "?")
+        props = selection.get("properties") or {}
+        latlng = selection.get("latlng")
+        # Show only the most useful attribute fields so the prompt
+        # stays short. Anything not in this set gets dropped — the
+        # agent can ask follow-ups with intersect_layer / nearest if
+        # it needs more.
+        key_fields = ("code_insee", "nom_officiel", "code_dep", "dept", "peril_kind")
+        shown = {k: props[k] for k in key_fields if k in props}
+        # Fall back to first 4 properties for layers whose attribute
+        # set we don't pre-recognise.
+        if not shown and props:
+            shown = dict(list(props.items())[:4])
+        attr_str = ", ".join(f"{k}={v!r}" for k, v in shown.items()) if shown else "(no key attrs)"
+        latlng_str = (
+            f" @ ({latlng[0]:.4f}, {latlng[1]:.4f})"
+            if latlng and len(latlng) == 2
+            else ""
+        )
+        lines.append(f"- Selection: layer={layer_id} {attr_str}{latlng_str}")
+        lines.append(
+            "  ↑ The user clicked this feature. Treat 'this', 'ce truc', "
+            "'cette zone' etc. as referring to it."
+        )
     return "\n".join(lines)
 
 

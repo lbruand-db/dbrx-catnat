@@ -1,6 +1,6 @@
 import L, { type Map as LeafletMap } from "leaflet";
 import "leaflet.vectorgrid";
-import type { MapOp } from "@/types/chat";
+import type { FeatureSelection, MapOp } from "@/types/chat";
 
 /**
  * Apply a `MapOp` (emitted by the agent via the `map_op` SSE event) to
@@ -12,6 +12,10 @@ import type { MapOp } from "@/types/chat";
  * endpoint (`/api/tiles/<layer>/{z}/{x}/{y}.pbf`). `zoom_to` still
  * uses an off-map `L.geoJSON` purely to compute bounds.
  *
+ * The optional `onSelectionChange` callback (UI.md §3.2 reverse
+ * channel) fires when the user clicks a feature on an `add_layer`
+ * surface — the next chat turn then carries the click as context.
+ *
  * Kept as a plain function (not a class / hook) so tests can drive it
  * directly with a mocked map.
  */
@@ -20,7 +24,20 @@ export type ManagedLayer = L.Layer & {
     _catnatLayerId?: string;
 };
 
-export function applyMapOp(op: MapOp, map: LeafletMap, layers: Map<string, ManagedLayer>): void {
+/** Callback signature for clicks on agent-added layers. */
+export type SelectionChangeHandler = (selection: FeatureSelection | null) => void;
+
+interface VectorTileClickEvent {
+    latlng: { lat: number; lng: number };
+    layer?: { properties?: Record<string, unknown> };
+}
+
+export function applyMapOp(
+    op: MapOp,
+    map: LeafletMap,
+    layers: Map<string, ManagedLayer>,
+    onSelectionChange?: SelectionChangeHandler,
+): void {
     switch (op.op) {
         case "add_layer": {
             const existing = layers.get(op.layer_id);
@@ -56,6 +73,26 @@ export function applyMapOp(op: MapOp, map: LeafletMap, layers: Map<string, Manag
                 },
             });
             layer._catnatLayerId = op.layer_id;
+
+            // Wire the click handler that turns a Leaflet click into a
+            // selection update. `e.layer.properties` carries the
+            // clicked vector-tile feature's attributes; `e.latlng` is
+            // the click position. The agent will see both as system
+            // context on the next /api/chat turn.
+            if (onSelectionChange) {
+                const eventfulLayer = layer as unknown as {
+                    on: (kind: "click", handler: (e: VectorTileClickEvent) => void) => void;
+                };
+                eventfulLayer.on("click", (e: VectorTileClickEvent) => {
+                    if (!e.layer?.properties) return;
+                    onSelectionChange({
+                        layer_id: op.layer_id,
+                        properties: e.layer.properties,
+                        latlng: [e.latlng.lat, e.latlng.lng],
+                    });
+                });
+            }
+
             layer.addTo(map);
             layers.set(op.layer_id, layer);
             return;
@@ -65,6 +102,9 @@ export function applyMapOp(op: MapOp, map: LeafletMap, layers: Map<string, Manag
             if (existing) {
                 map.removeLayer(existing);
                 layers.delete(op.layer_id);
+                // Clear any selection that pointed at the removed
+                // layer so the agent doesn't see a stale reference.
+                onSelectionChange?.(null);
             }
             return;
         }

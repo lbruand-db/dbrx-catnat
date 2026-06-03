@@ -41,9 +41,21 @@ export interface ChatActiveLayer {
     row_count?: number;
 }
 
+/** A feature the user clicked on the map. Forwarded to the agent as
+ * part of the next chat turn so it can answer questions about
+ * "this red zone" without being told which one. */
+export interface FeatureSelection {
+    layer_id: string;
+    properties: Record<string, unknown>;
+    /** Click coordinates in EPSG:4326 (lat, lon) — useful for the
+     * agent to scope follow-up spatial queries. */
+    latlng?: [number, number];
+}
+
 export interface ChatContext {
     viewport?: ChatViewport;
     active_layers?: ChatActiveLayer[];
+    selection?: FeatureSelection | null;
 }
 
 /** Map-mutating operations the agent can emit via the `map_op` SSE event.

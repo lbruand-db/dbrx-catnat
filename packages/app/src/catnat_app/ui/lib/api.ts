@@ -18,6 +18,7 @@ export interface ChatActiveLayer {
 }
 export interface ChatContext {
     active_layers?: ChatActiveLayer[];
+    selection?: ChatSelection | null;
     viewport?: ChatViewport | null;
 }
 export interface ChatMessage {
@@ -30,6 +31,11 @@ export interface ChatMessage {
 export interface ChatRequest {
     context?: ChatContext | null;
     messages: ChatMessage[];
+}
+export interface ChatSelection {
+    latlng?: number[] | null;
+    layer_id: string;
+    properties: Record<string, unknown>;
 }
 export interface ChatViewport {
     bbox?: number[] | null;

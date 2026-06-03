@@ -44,6 +44,20 @@ class ChatActiveLayer(BaseModel):
     row_count: int | None = None
 
 
+class ChatSelection(BaseModel):
+    """The feature the user most recently clicked on the map.
+
+    `properties` is the vector-tile feature's attribute set (e.g.
+    `code_insee`, `nom_officiel` for a commune polygon). `latlng` is
+    the click position in EPSG:4326 `[lat, lon]` so the agent can
+    scope follow-up spatial queries.
+    """
+
+    layer_id: str
+    properties: dict[str, Any]
+    latlng: list[float] | None = None
+
+
 class ChatContext(BaseModel):
     """Reverse-channel state attached to every /api/chat POST so the
     agent reads the user's map view without needing a tool call.
@@ -55,6 +69,7 @@ class ChatContext(BaseModel):
 
     viewport: ChatViewport | None = None
     active_layers: list[ChatActiveLayer] = []
+    selection: ChatSelection | None = None
 
 
 class ChatRequest(BaseModel):
