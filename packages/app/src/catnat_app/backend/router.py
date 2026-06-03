@@ -99,8 +99,12 @@ async def chat(request: ChatRequest) -> StreamingResponse:
 
     The body is the prior conversation in OpenAI shape (system prompt is
     prepended server-side). Response is `text/event-stream` with events
-    `delta`, `tool_call`, `tool_result`, `done`, `error` (see
-    `backend/agent/events.py` for shapes).
+    `delta`, `tool_call`, `tool_result`, `done`, `error`, `map_op`
+    (see `backend/agent/events.py` for shapes).
+
+    Headers explicitly disable upstream buffering — the Databricks Apps
+    gateway (and most nginx-style proxies in the chain) will hold a
+    streaming response until completion unless asked otherwise.
     """
     payload_messages = [m.model_dump(exclude_none=True) for m in request.messages]
 
@@ -108,4 +112,14 @@ async def chat(request: ChatRequest) -> StreamingResponse:
         async for event in run_agent(payload_messages):
             yield sse(event)
 
-    return StreamingResponse(event_source(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            # nginx-style proxies (the Databricks Apps gateway is one)
+            # honour this to skip response buffering.
+            "X-Accel-Buffering": "no",
+        },
+    )

@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import time
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -30,6 +32,17 @@ from .events import AgentEvent
 from .prompts import SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
+
+
+def _trace_emit(event: AgentEvent, t0: float) -> None:
+    """Log emit timestamps when `CATNAT_AGENT_EMIT_TRACE=1`.
+
+    Used by `scripts/probe_agent.py` (and ad-hoc debugging) to tell
+    apart loop slowness from transport buffering.
+    """
+    if os.environ.get("CATNAT_AGENT_EMIT_TRACE") == "1":
+        elapsed = time.monotonic() - t0
+        logger.info("emit %s at +%.2fs", event.name, elapsed)
 
 
 # Hard cap on tool-call iterations per turn — anything more is the agent
@@ -128,6 +141,7 @@ async def run_agent(
     """
     client = client_factory()
     used_model = model or get_model()
+    t0 = time.monotonic()
 
     async with create_connected_server_and_client_session(mcp_server) as mcp_session:
         tools_response = await mcp_session.list_tools()
@@ -159,12 +173,16 @@ async def run_agent(
                     continue
                 if delta.content:
                     assistant_text += delta.content
-                    yield AgentEvent("delta", {"text": delta.content})
+                    ev = AgentEvent("delta", {"text": delta.content})
+                    _trace_emit(ev, t0)
+                    yield ev
                 if delta.tool_calls:
                     _accumulate_tool_calls(tool_calls_acc, list(delta.tool_calls))
 
             if not tool_calls_acc:
-                yield AgentEvent("done", {"final_text": assistant_text})
+                ev = AgentEvent("done", {"final_text": assistant_text})
+                _trace_emit(ev, t0)
+                yield ev
                 return
 
             tool_calls = [tool_calls_acc[i] for i in sorted(tool_calls_acc)]
@@ -197,7 +215,11 @@ async def run_agent(
                 except json.JSONDecodeError:
                     args = {}
 
-                yield AgentEvent("tool_call", {"id": tc_id, "name": tool_name, "arguments": args})
+                ev_tc = AgentEvent(
+                    "tool_call", {"id": tc_id, "name": tool_name, "arguments": args}
+                )
+                _trace_emit(ev_tc, t0)
+                yield ev_tc
 
                 try:
                     tool_result = await mcp_session.call_tool(tool_name, arguments=args)
@@ -211,9 +233,11 @@ async def run_agent(
                 # LLM gets a slim summary so it doesn't drown in geojson.
                 map_op_payload, llm_payload = _split_ui_payload(payload, is_error)
                 if map_op_payload is not None:
-                    yield AgentEvent("map_op", map_op_payload)
+                    ev_map = AgentEvent("map_op", map_op_payload)
+                    _trace_emit(ev_map, t0)
+                    yield ev_map
 
-                yield AgentEvent(
+                ev_tr = AgentEvent(
                     "tool_result",
                     {
                         "id": tc_id,
@@ -222,6 +246,8 @@ async def run_agent(
                         "is_error": is_error,
                     },
                 )
+                _trace_emit(ev_tr, t0)
+                yield ev_tr
 
                 history.append(
                     {
