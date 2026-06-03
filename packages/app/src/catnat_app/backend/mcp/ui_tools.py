@@ -25,7 +25,6 @@ from mcp.server.fastmcp import FastMCP
 from ..core.sql import Sql
 from . import _sql_client
 from .allowlist import LayerNotAllowed, get_allowed_layer
-from .sql_templates import _safe_identifier, build_filter_clauses
 
 # Default per-peril styles — sensible-looking choropleth colours the
 # agent can override via `style_layer`.
@@ -45,29 +44,26 @@ def _default_style(peril: str) -> dict[str, Any]:
 # ---- add_layer --------------------------------------------------------
 
 
-# Cap on rows shipped to the FE per layer. Larger than `query_layer`'s
-# 500 because the FE renders these as map polygons (cheap) and the LLM
-# never sees them.
-ADD_LAYER_MAX_ROWS = 2000
-
-
 def add_layer_impl(
     sql: Sql,
     catalog: str,
     layer_id: str,
     *,
     style: dict[str, Any] | None = None,
-    limit: int | None = None,
-    bbox: tuple[float, float, float, float] | None = None,
-    where: dict[str, str | int | float | bool] | None = None,
 ) -> dict[str, Any]:
     """Render a polygon-grain layer on the operational map.
 
-    Pulls up to `ADD_LAYER_MAX_ROWS` features via `ST_AsGeoJSON` and
-    bundles them into a GeoJSON FeatureCollection the FE will hand to
-    Leaflet's `L.geoJSON`. The `bbox` / `where` filters mirror
-    `query_layer` and exist so the agent can scope a layer in a single
-    tool call (instead of `query_layer` → eyeball → `add_layer` → zoom).
+    Returns a Mapbox Vector Tile URL template the FE hands to
+    `L.vectorGrid.protobuf`. The Lakebase mirror (§4.5) holds the
+    geometries; `/api/tiles/<layer>/{z}/{x}/{y}.pbf` generates MVT
+    bytes on demand via `ST_AsMVT`. No eager geojson — the agent
+    doesn't see feature bytes at all.
+
+    For v1 we don't filter at tile time (no bbox / where args). The
+    mirror is already scoped to the dept-069 demo set, so
+    `add_layer admin_communes` renders the loaded communes as-is.
+    URL-param filtering is a SPEC §10.7 follow-up if national-scale
+    data lands.
     """
     layer = get_allowed_layer(sql, catalog, layer_id)
     if not layer.geom_column:
@@ -76,63 +72,12 @@ def add_layer_impl(
             f"'{layer_id}' has no geom_column (grain={layer.grain})"
         )
 
-    col = _safe_identifier(layer.geom_column)
-    capped = max(1, min(limit or ADD_LAYER_MAX_ROWS, ADD_LAYER_MAX_ROWS))
-
-    # Shared filter plumbing with `query_layer`; we always add a
-    # `geom IS NOT NULL` guard on top because Leaflet chokes on null
-    # features.
-    conditions, filter_params = build_filter_clauses(layer, bbox=bbox, where=where)
-    conditions.append(f"{col} IS NOT NULL")
-    where_sql = "WHERE " + " AND ".join(conditions)
-
-    statement = (
-        f"SELECT ST_AsGeoJSON({col}) AS geom_geojson, * EXCEPT ({col}) "
-        f"FROM IDENTIFIER(:table_fq) "
-        f"{where_sql} "
-        f"LIMIT {capped}"
-    )
-    params = [
-        StatementParameterListItem(name="table_fq", value=layer.table_fq, type="STRING"),
-        *filter_params,
-    ]
-    response = sql.execute_statement(
-        statement=statement,
-        wait_timeout="30s",
-        parameters=params,
-    )
-    if not response.status or response.status.state != StatementState.SUCCEEDED:
-        err = response.status.error if response.status else None
-        msg = err.message if err else "unknown"
-        raise RuntimeError(f"add_layer query failed: {msg}")
-
-    column_names: list[str] = []
-    if response.manifest and response.manifest.schema and response.manifest.schema.columns:
-        column_names = [c.name for c in response.manifest.schema.columns]
-    rows = list(response.result.data_array or []) if response.result else []
-
-    features: list[dict[str, Any]] = []
-    for r in rows:
-        # `geom_geojson` is column 0; everything else is properties.
-        geom_str = r[0]
-        if not geom_str:
-            continue
-        try:
-            geometry = json.loads(geom_str)
-        except json.JSONDecodeError:
-            continue
-        props = {column_names[i]: r[i] for i in range(1, len(r))} if column_names else {}
-        features.append({"type": "Feature", "geometry": geometry, "properties": props})
-
     return {
         "op": "add_layer",
         "layer_id": layer.layer_id,
         "peril": layer.peril,
-        "geojson": {"type": "FeatureCollection", "features": features},
+        "tile_url": f"/api/tiles/{layer.layer_id}/{{z}}/{{x}}/{{y}}.pbf",
         "style": style or _default_style(layer.peril),
-        "row_count": len(features),
-        "bbox": list(bbox) if bbox is not None else None,
-        "where": where,
         "status": "ok",
     }
 
@@ -215,39 +160,22 @@ def register(server: FastMCP) -> None:
     @server.tool(
         name="add_layer",
         description=(
-            "Render a polygon-grain layer on the operational Leaflet map. "
-            "Pass `layer_id` from `list_layers`. `bbox` is "
-            "[min_lon,min_lat,max_lon,max_lat]; `where` is an AND-joined "
-            "dict of column = value predicates. Filter at call time "
-            "rather than calling `query_layer` first to explore. Optional "
-            "`style` overrides the per-peril default colour. Up to 2000 "
-            "features. H3-grain layers are not supported in this phase — "
-            "use `list_layers` to check `geom_column` first."
+            "Render a polygon-grain layer on the operational Leaflet "
+            "map as a vector-tile source. Pass `layer_id` from "
+            "`list_layers`. The full layer (as mirrored in Lakebase) is "
+            "served; for narrower analytical work use `query_layer`. "
+            "Optional `style` overrides the per-peril default colour. "
+            "H3-grain layers are not supported in this phase — use "
+            "`list_layers` to check `geom_column` first."
         ),
     )
     def _add_layer(
         layer_id: str,
         style: dict[str, Any] | None = None,
-        limit: int | None = None,
-        bbox: list[float] | None = None,
-        where: dict[str, str | int | float | bool] | None = None,
     ) -> dict[str, Any]:
         sql, catalog = _sql_client.get_app_sql()
-        bbox_tuple: tuple[float, float, float, float] | None = None
-        if bbox is not None:
-            if len(bbox) != 4:
-                raise ValueError("bbox must be [min_lon, min_lat, max_lon, max_lat]")
-            bbox_tuple = (bbox[0], bbox[1], bbox[2], bbox[3])
         try:
-            return add_layer_impl(
-                sql,
-                catalog,
-                layer_id,
-                style=style,
-                limit=limit,
-                bbox=bbox_tuple,
-                where=where,
-            )
+            return add_layer_impl(sql, catalog, layer_id, style=style)
         except LayerNotAllowed as e:
             raise ValueError(str(e)) from e
 
@@ -295,7 +223,6 @@ def register(server: FastMCP) -> None:
 
 
 __all__ = [
-    "ADD_LAYER_MAX_ROWS",
     "add_layer_impl",
     "register",
     "remove_layer_impl",

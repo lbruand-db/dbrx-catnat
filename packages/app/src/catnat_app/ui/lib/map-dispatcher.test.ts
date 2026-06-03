@@ -1,14 +1,44 @@
-import type L from "leaflet";
-import type { Map as LeafletMap } from "leaflet";
+import L, { type Map as LeafletMap } from "leaflet";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MapOp } from "@/types/chat";
-import { applyMapOp } from "./map-dispatcher";
+import { applyMapOp, type ManagedLayer } from "./map-dispatcher";
 
 /**
- * `applyMapOp` is a thin wrapper around Leaflet's GeoJSON / map APIs.
- * Tests stub the map handle with vitest mocks — we assert on the calls
- * rather than on the rendered DOM.
+ * `applyMapOp` is a thin wrapper around Leaflet's vectorGrid + GeoJSON
+ * APIs. Tests stub the map handle + the vectorGrid factory with
+ * vitest mocks — we assert on the calls rather than on the rendered
+ * DOM. `L.vectorGrid.protobuf` is a plugin and not available in
+ * jsdom by default; we install a mock at import-time below.
  */
+
+interface MockVgLayer {
+    addTo: ReturnType<typeof vi.fn>;
+    setStyle?: ReturnType<typeof vi.fn>;
+    _catnatLayerId?: string;
+}
+
+// Install a `L.vectorGrid.protobuf` factory before any test runs. The
+// real plugin is loaded via `import "leaflet.vectorgrid"` inside the
+// dispatcher, but it never gets to attach to the namespace under
+// vitest (no canvas), so we stand in for it.
+const vgFactory = vi.fn();
+beforeEach(() => {
+    vgFactory.mockReset();
+    vgFactory.mockImplementation(() => {
+        const layer: MockVgLayer = {
+            addTo: vi.fn().mockReturnThis(),
+            setStyle: vi.fn(),
+        };
+        return layer as unknown as ManagedLayer;
+    });
+    (
+        L as unknown as {
+            vectorGrid: { protobuf: typeof vgFactory };
+            canvas: { tile: () => unknown };
+        }
+    ).vectorGrid = { protobuf: vgFactory };
+    (L as unknown as { canvas: { tile: () => unknown } }).canvas = { tile: () => ({}) };
+});
 
 function makeMap(): LeafletMap {
     const m = {
@@ -19,53 +49,36 @@ function makeMap(): LeafletMap {
     return m;
 }
 
-const SQUARE_FC = {
-    type: "FeatureCollection" as const,
-    features: [
-        {
-            type: "Feature" as const,
-            geometry: {
-                type: "Polygon" as const,
-                coordinates: [
-                    [
-                        [4.85, 45.75],
-                        [4.86, 45.75],
-                        [4.86, 45.76],
-                        [4.85, 45.76],
-                        [4.85, 45.75],
-                    ],
-                ],
-            },
-            properties: {},
-        },
-    ],
-};
-
 describe("applyMapOp", () => {
     let map: LeafletMap;
-    let layers: Map<string, L.GeoJSON>;
+    let layers: Map<string, ManagedLayer>;
 
     beforeEach(() => {
         map = makeMap();
         layers = new Map();
     });
 
-    it("add_layer registers the layer and fits the bounds", () => {
+    it("add_layer wires L.vectorGrid.protobuf with the tile URL", () => {
         const op: MapOp = {
             op: "add_layer",
-            layer_id: "x",
+            layer_id: "hazard_ppri_communes",
             peril: "flood",
-            geojson: SQUARE_FC,
+            tile_url: "/api/tiles/hazard_ppri_communes/{z}/{x}/{y}.pbf",
             style: { color: "#1f77b4" },
-            row_count: 1,
             status: "ok",
         };
         applyMapOp(op, map, layers);
-        expect(layers.get("x")).toBeDefined();
-        expect(map.fitBounds).toHaveBeenCalledTimes(1);
-        // L.geoJSON adds itself to the map via .addTo() — that maps onto
-        // map.addLayer internally.
-        expect(map.addLayer).toHaveBeenCalled();
+        expect(vgFactory).toHaveBeenCalledTimes(1);
+        const [url, options] = vgFactory.mock.calls[0];
+        expect(url).toBe(op.tile_url);
+        // The MVT layer name must be the layer_id (matches what
+        // ST_AsMVT writes on the backend).
+        expect(options.vectorTileLayerStyles[op.layer_id]).toBeDefined();
+        expect(options.vectorTileLayerStyles[op.layer_id].color).toBe("#1f77b4");
+        // Registered under the layer_id and tagged for cleanup.
+        const reg = layers.get("hazard_ppri_communes");
+        expect(reg).toBeDefined();
+        expect(reg?._catnatLayerId).toBe("hazard_ppri_communes");
     });
 
     it("add_layer replaces an existing layer with the same id", () => {
@@ -73,9 +86,8 @@ describe("applyMapOp", () => {
             op: "add_layer",
             layer_id: "x",
             peril: "flood",
-            geojson: SQUARE_FC,
+            tile_url: "/api/tiles/x/{z}/{x}/{y}.pbf",
             style: {},
-            row_count: 1,
             status: "ok",
         };
         applyMapOp(op, map, layers);
@@ -84,6 +96,7 @@ describe("applyMapOp", () => {
         expect(map.removeLayer).toHaveBeenCalledWith(first);
         // The new layer overwrote the old one.
         expect(layers.get("x")).not.toBe(first);
+        expect(vgFactory).toHaveBeenCalledTimes(2);
     });
 
     it("remove_layer drops the layer from the map and the registry", () => {
@@ -92,9 +105,8 @@ describe("applyMapOp", () => {
                 op: "add_layer",
                 layer_id: "x",
                 peril: "flood",
-                geojson: SQUARE_FC,
+                tile_url: "/api/tiles/x/{z}/{x}/{y}.pbf",
                 style: {},
-                row_count: 1,
                 status: "ok",
             },
             map,
@@ -111,11 +123,21 @@ describe("applyMapOp", () => {
         expect(map.removeLayer).not.toHaveBeenCalled();
     });
 
-    it("zoom_to fits map bounds to the WKT geometry without adding it", () => {
+    it("zoom_to fits map bounds to the GeoJSON without adding a layer to the map", () => {
         applyMapOp(
             {
                 op: "zoom_to",
-                geom_geojson: SQUARE_FC.features[0].geometry,
+                geom_geojson: {
+                    type: "Polygon",
+                    coordinates: [
+                        [
+                            [4.85, 45.75],
+                            [4.86, 45.75],
+                            [4.86, 45.76],
+                            [4.85, 45.75],
+                        ],
+                    ],
+                },
                 status: "ok",
             },
             map,
@@ -126,22 +148,20 @@ describe("applyMapOp", () => {
         expect(layers.size).toBe(0);
     });
 
-    it("style_layer mutates an existing layer's style", () => {
+    it("style_layer forwards the style payload to the layer's setStyle", () => {
         applyMapOp(
             {
                 op: "add_layer",
                 layer_id: "x",
                 peril: "flood",
-                geojson: SQUARE_FC,
+                tile_url: "/api/tiles/x/{z}/{x}/{y}.pbf",
                 style: { color: "#aaa" },
-                row_count: 1,
                 status: "ok",
             },
             map,
             layers,
         );
-        const layer = layers.get("x") as L.GeoJSON;
-        const setStyleSpy = vi.spyOn(layer, "setStyle");
+        const layer = layers.get("x") as unknown as MockVgLayer;
         applyMapOp(
             {
                 op: "style_layer",
@@ -152,7 +172,7 @@ describe("applyMapOp", () => {
             map,
             layers,
         );
-        expect(setStyleSpy).toHaveBeenCalledWith({ color: "#ff0000" });
+        expect(layer.setStyle).toHaveBeenCalledWith({ color: "#ff0000" });
     });
 
     it("style_layer for an unknown layer is a no-op", () => {

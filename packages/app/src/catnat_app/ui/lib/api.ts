@@ -265,6 +265,119 @@ export function useListLayersSuspense<TData = {
         ...options?.query
     });
 }
+export const tilesMetadata = async (options?: RequestInit): Promise<{
+    data: Record<string, unknown>;
+}> =>{
+    const res = await fetch("/api/tiles/metadata", {
+        ...options,
+        method: "GET"
+    });
+    if (!res.ok) {
+        const body = await res.text();
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(body);
+        } catch  {
+            parsed = body;
+        }
+        throw new ApiError(res.status, res.statusText, parsed);
+    }
+    return {
+        data: await res.json()
+    };
+};
+export const tilesMetadataKey = ()=>{
+    return [
+        "/api/tiles/metadata"
+    ] as const;
+};
+export function useTilesMetadata<TData = {
+    data: Record<string, unknown>;
+}>(options?: {
+    query?: Omit<UseQueryOptions<{
+        data: Record<string, unknown>;
+    }, ApiError, TData>, "queryKey" | "queryFn">;
+}) {
+    return useQuery({
+        queryKey: tilesMetadataKey(),
+        queryFn: ()=>tilesMetadata(),
+        ...options?.query
+    });
+}
+export function useTilesMetadataSuspense<TData = {
+    data: Record<string, unknown>;
+}>(options?: {
+    query?: Omit<UseSuspenseQueryOptions<{
+        data: Record<string, unknown>;
+    }, ApiError, TData>, "queryKey" | "queryFn">;
+}) {
+    return useSuspenseQuery({
+        queryKey: tilesMetadataKey(),
+        queryFn: ()=>tilesMetadata(),
+        ...options?.query
+    });
+}
+export interface TileParams {
+    layer: string;
+    z: number;
+    x: number;
+    y: number;
+}
+export const tile = async (params: TileParams, options?: RequestInit): Promise<{
+    data: unknown;
+}> =>{
+    const res = await fetch(`/api/tiles/${params.layer}/${params.z}/${params.x}/${params.y}.pbf`, {
+        ...options,
+        method: "GET"
+    });
+    if (!res.ok) {
+        const body = await res.text();
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(body);
+        } catch  {
+            parsed = body;
+        }
+        throw new ApiError(res.status, res.statusText, parsed);
+    }
+    return {
+        data: await res.json()
+    };
+};
+export const tileKey = (params?: TileParams)=>{
+    return [
+        "/api/tiles/{layer}/{z}/{x}/{y}.pbf",
+        params
+    ] as const;
+};
+export function useTile<TData = {
+    data: unknown;
+}>(options: {
+    params: TileParams;
+    query?: Omit<UseQueryOptions<{
+        data: unknown;
+    }, ApiError, TData>, "queryKey" | "queryFn">;
+}) {
+    return useQuery({
+        queryKey: tileKey(options.params),
+        queryFn: ()=>tile(options.params),
+        ...options?.query
+    });
+}
+export function useTileSuspense<TData = {
+    data: unknown;
+}>(options: {
+    params: TileParams;
+    query?: Omit<UseSuspenseQueryOptions<{
+        data: unknown;
+    }, ApiError, TData>, "queryKey" | "queryFn">;
+}) {
+    return useSuspenseQuery({
+        queryKey: tileKey(options.params),
+        queryFn: ()=>tile(options.params),
+        ...options?.query
+    });
+}
 export const version = async (options?: RequestInit): Promise<{
     data: VersionOut;
 }> =>{

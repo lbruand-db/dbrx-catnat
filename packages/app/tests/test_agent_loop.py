@@ -309,13 +309,17 @@ async def test_empty_tool_arguments_normalised_to_object_for_next_iteration(
 
 
 @pytest.mark.anyio("asyncio")
-async def test_ui_tool_result_emits_map_op_and_strips_geojson_for_llm(
+async def test_ui_tool_result_emits_map_op_and_strips_heavy_fields_for_llm(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When a tool result has an `op` field, the loop emits both a
-    `map_op` event (full payload) and a `tool_result` (geojson stripped
-    so the LLM doesn't drown in features)."""
-    # Allowlist row for a polygon layer, then the add_layer query result.
+    `map_op` event (full payload) and a `tool_result` (heavy fields
+    stripped so the LLM doesn't drown in geometry bytes).
+
+    With P4.5 the add_layer payload is a tile URL — small — so the
+    LLM-visible and FE-visible payloads happen to match in shape.
+    zoom_to still carries a `geom_geojson` blob that gets stripped.
+    """
     polygon_row = [
         [
             "hazard_ppri_communes",
@@ -329,24 +333,12 @@ async def test_ui_tool_result_emits_map_op_and_strips_geojson_for_llm(
         ]
     ]
     sql = MagicMock(spec=Sql)
-    responses = []
-    # 1) allowlist lookup
-    r1 = MagicMock()
-    r1.status.state = StatementState.SUCCEEDED
-    r1.status.error = None
-    r1.result.data_array = polygon_row
-    r1.manifest.schema.columns = []
-    responses.append(r1)
-    # 2) add_layer SELECT
-    r2 = MagicMock()
-    r2.status.state = StatementState.SUCCEEDED
-    r2.status.error = None
-    r2.result.data_array = [['{"type":"Polygon","coordinates":[[[0,0],[1,1],[1,0],[0,0]]]}', "x"]]
-    r2.manifest.schema.columns = [MagicMock(), MagicMock()]
-    r2.manifest.schema.columns[0].name = "geom_geojson"
-    r2.manifest.schema.columns[1].name = "code_dep"
-    responses.append(r2)
-    sql.execute_statement = MagicMock(side_effect=responses)
+    response = MagicMock()
+    response.status.state = StatementState.SUCCEEDED
+    response.status.error = None
+    response.result.data_array = polygon_row
+    response.manifest.schema.columns = []
+    sql.execute_statement = MagicMock(return_value=response)
     monkeypatch.setattr(_sql_client_mod, "get_app_sql", lambda: (sql, "cat"))
 
     client = _ScriptedClient(
@@ -374,20 +366,14 @@ async def test_ui_tool_result_emits_map_op_and_strips_geojson_for_llm(
     map_op = next(e for e in events if e[0] == "map_op")[1]
     assert map_op["op"] == "add_layer"
     assert map_op["layer_id"] == "hazard_ppri_communes"
-    # Full geojson present in map_op
-    assert "geojson" in map_op
-    assert map_op["geojson"]["type"] == "FeatureCollection"
+    # Tile URL is what the FE feeds to L.vectorGrid.protobuf.
+    assert map_op["tile_url"] == "/api/tiles/hazard_ppri_communes/{z}/{x}/{y}.pbf"
+    # No eager geojson in the response either side.
+    assert "geojson" not in map_op
 
     tool_result = next(e for e in events if e[0] == "tool_result")[1]
-    # geojson stripped from LLM-bound payload
-    assert "geojson" not in tool_result["result"]
     assert tool_result["result"]["op"] == "add_layer"
-    assert tool_result["result"]["row_count"] == 1
-
-    # And the same stripped payload is what we resubmit in history.
-    second = client.calls[1]
-    tool_msg = next(m for m in second["messages"] if m["role"] == "tool")
-    assert "geojson" not in tool_msg["content"]
+    assert tool_result["result"]["tile_url"].endswith(".pbf")
 
 
 @pytest.mark.anyio("asyncio")

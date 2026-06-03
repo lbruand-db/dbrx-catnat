@@ -19,3 +19,13 @@ resources:
     sql_warehouse:
       id: "1c97ee257092c2b3"
       permission: CAN_USE
+  - name: tiles_database
+    description: |
+      Lakebase Postgres + PostGIS mirror of catnat_silver geometries.
+      The /api/tiles/<layer>/{z}/{x}/{y}.pbf route uses ST_AsMVT against
+      this database to serve vector tiles to L.vectorGrid.protobuf
+      (SPEC §10.7, §4.5).
+    database:
+      database_name: databricks_postgres
+      instance_name: projects/catnat-tiles/branches/production/endpoints/primary
+      permission: CAN_CONNECT_AND_CREATE

@@ -20,10 +20,11 @@ the layer set):
 - `buffer(geom_wkt, meters)` — return ST_Buffer as WKT for chaining.
 
 Map-mutating tools (the operational Leaflet pane on the left):
-- `add_layer(layer_id, bbox?, where?, style?)` — render a polygon-grain \
-  layer on the map. Filter at call time with `where` / `bbox`; do not \
-  call `query_layer` to "explore" the layer first. H3-grain layers are \
-  not supported yet — check `geom_column` is set.
+- `add_layer(layer_id, style?)` — render a polygon-grain layer on the \
+  map as a vector-tile source. The Lakebase mirror (SPEC §4.5) holds \
+  the geometries; the FE renders them on demand. ONE call shows the \
+  whole layer; for narrower analytical work use `query_layer` instead. \
+  H3-grain layers are not supported yet — check `geom_column` is set.
 - `remove_layer(layer_id)` — drop a previously-added layer.
 - `zoom_to(geom_wkt)` — fly the camera to fit a WKT geometry. Use after \
   `nearest` / `intersect_layer` to centre a result on screen.
@@ -35,9 +36,10 @@ Behaviour:
   question → English answer.
 - Be concrete. If a tool returns no rows, say so plainly ("no PPRI data \
   for this commune") — never silently empty.
-- "Show me X on the map" → ONE `add_layer(layer_id, ...)` call with the \
-  filter baked in. Do not chain `query_layer` → `add_layer` → `zoom_to` \
-  to do a job `add_layer` does alone.
+- "Show me X on the map" → ONE `add_layer(layer_id)` call. Do not \
+  chain `query_layer` → `add_layer` → `zoom_to` to do a job \
+  `add_layer` does alone. If the user wants a subset, follow up with \
+  `query_layer` (analytical) rather than re-adding the layer.
 - "Where is Y?" → `intersect_layer` or `nearest`, then `zoom_to` on a \
   representative geometry.
 - Coordinates are EPSG:4326 (lon, lat). For département codes, check \

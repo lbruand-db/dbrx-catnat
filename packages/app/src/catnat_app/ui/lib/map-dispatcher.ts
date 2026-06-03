@@ -1,4 +1,5 @@
 import L, { type Map as LeafletMap } from "leaflet";
+import "leaflet.vectorgrid";
 import type { MapOp } from "@/types/chat";
 
 /**
@@ -6,24 +7,57 @@ import type { MapOp } from "@/types/chat";
  * a Leaflet map handle. Maintains an external `layers` Map so
  * `remove_layer` / `style_layer` can find what `add_layer` produced.
  *
+ * Per SPEC §10.7, `add_layer` payloads carry a `tile_url` template; we
+ * render via `L.vectorGrid.protobuf` against the Lakebase MVT
+ * endpoint (`/api/tiles/<layer>/{z}/{x}/{y}.pbf`). `zoom_to` still
+ * uses an off-map `L.geoJSON` purely to compute bounds.
+ *
  * Kept as a plain function (not a class / hook) so tests can drive it
  * directly with a mocked map.
  */
-export function applyMapOp(op: MapOp, map: LeafletMap, layers: Map<string, L.GeoJSON>): void {
+export type ManagedLayer = L.Layer & {
+    /** Stash the layer_id we registered under so cleanup can match. */
+    _catnatLayerId?: string;
+};
+
+export function applyMapOp(op: MapOp, map: LeafletMap, layers: Map<string, ManagedLayer>): void {
     switch (op.op) {
         case "add_layer": {
             const existing = layers.get(op.layer_id);
             if (existing) {
                 map.removeLayer(existing);
             }
-            const layer = L.geoJSON(op.geojson, { style: op.style as L.PathOptions });
+            const style = op.style as Record<string, unknown>;
+            // L.vectorGrid.protobuf is added by the leaflet.vectorgrid
+            // plugin; the @types/leaflet bundle doesn't know about it,
+            // so we cast through a thin alias.
+            const vgFactory = (
+                L as unknown as {
+                    vectorGrid: {
+                        protobuf: (url: string, opts: unknown) => ManagedLayer;
+                    };
+                }
+            ).vectorGrid.protobuf;
+            const layer = vgFactory(op.tile_url, {
+                rendererFactory: (L as unknown as { canvas: { tile: unknown } }).canvas.tile,
+                interactive: true,
+                getFeatureId: (f: { properties?: { code_insee?: string } }) =>
+                    f.properties?.code_insee ?? Math.random().toString(36),
+                vectorTileLayerStyles: {
+                    // Layer name in the MVT must match the second
+                    // arg to ST_AsMVT on the backend (= the layer_id).
+                    [op.layer_id]: {
+                        color: style.color ?? "#3388ff",
+                        fillColor: style.fillColor ?? style.color ?? "#3388ff",
+                        fillOpacity: style.fillOpacity ?? 0.35,
+                        weight: style.weight ?? 1,
+                        fill: true,
+                    },
+                },
+            });
+            layer._catnatLayerId = op.layer_id;
             layer.addTo(map);
             layers.set(op.layer_id, layer);
-            // Center on what we just added so the user sees it.
-            const bounds = layer.getBounds();
-            if (bounds.isValid()) {
-                map.fitBounds(bounds, { padding: [20, 20], maxZoom: 12 });
-            }
             return;
         }
         case "remove_layer": {
@@ -48,7 +82,11 @@ export function applyMapOp(op: MapOp, map: LeafletMap, layers: Map<string, L.Geo
         case "style_layer": {
             const existing = layers.get(op.layer_id);
             if (existing) {
-                existing.setStyle(op.style as L.PathOptions);
+                const setStyle = (existing as unknown as { setStyle?: (s: unknown) => void })
+                    .setStyle;
+                if (typeof setStyle === "function") {
+                    setStyle.call(existing, op.style);
+                }
             }
             return;
         }

@@ -18,7 +18,7 @@ from catnat_app.backend.mcp.ui_tools import (
     style_layer_impl,
     zoom_to_impl,
 )
-from databricks.sdk.service.sql import StatementParameterListItem, StatementState
+from databricks.sdk.service.sql import StatementState
 
 
 def _stub_sql_chain(*results: tuple[list[str], list[list[object]]]) -> Sql:
@@ -71,49 +71,23 @@ def _allowed_h3_layer_row() -> list[list[object]]:
 # --- add_layer --------------------------------------------------------
 
 
-def test_add_layer_returns_featurecollection_with_per_peril_default_style() -> None:
-    sql = _stub_sql_chain(
-        # Allowlist lookup
-        ([], _allowed_polygon_layer_row()),
-        # add_layer query: geom_geojson, layer_id, code_dep
-        (
-            ["geom_geojson", "layer_id", "code_dep"],
-            [
-                [
-                    '{"type":"Polygon","coordinates":[[[4.85,45.75],[4.86,45.75],[4.86,45.76],[4.85,45.75]]]}',
-                    "hazard_ppri_communes",
-                    "069",
-                ],
-                [
-                    '{"type":"Polygon","coordinates":[[[4.87,45.77],[4.88,45.77],[4.88,45.78],[4.87,45.77]]]}',
-                    "hazard_ppri_communes",
-                    "069",
-                ],
-            ],
-        ),
-    )
+def test_add_layer_returns_tile_url_with_per_peril_default_style() -> None:
+    sql = _stub_sql_chain(([], _allowed_polygon_layer_row()))
     result = add_layer_impl(sql, "cat", "hazard_ppri_communes")
     assert result["op"] == "add_layer"
     assert result["layer_id"] == "hazard_ppri_communes"
     assert result["peril"] == "flood"
-    assert result["row_count"] == 2
     assert result["status"] == "ok"
-    # FeatureCollection shape
-    fc = result["geojson"]
-    assert fc["type"] == "FeatureCollection"
-    assert len(fc["features"]) == 2
-    assert fc["features"][0]["type"] == "Feature"
-    assert fc["features"][0]["geometry"]["type"] == "Polygon"
-    assert fc["features"][0]["properties"]["code_dep"] == "069"
+    # Tile URL is the slippy-map template the FE feeds to L.vectorGrid.protobuf.
+    assert result["tile_url"] == "/api/tiles/hazard_ppri_communes/{z}/{x}/{y}.pbf"
+    # No eager geojson in the response — we ship a URL, not features.
+    assert "geojson" not in result
     # Flood layer → blue-ish default style
     assert result["style"]["color"] == "#1f77b4"
 
 
 def test_add_layer_uses_override_style_when_supplied() -> None:
-    sql = _stub_sql_chain(
-        ([], _allowed_polygon_layer_row()),
-        (["geom_geojson"], []),
-    )
+    sql = _stub_sql_chain(([], _allowed_polygon_layer_row()))
     result = add_layer_impl(sql, "cat", "hazard_ppri_communes", style={"color": "#ff0000"})
     assert result["style"] == {"color": "#ff0000"}
 
@@ -124,73 +98,12 @@ def test_add_layer_refuses_h3_grain_layer() -> None:
         add_layer_impl(sql, "cat", "hazard_rga_h3")
 
 
-def test_add_layer_skips_rows_with_null_or_invalid_geometry() -> None:
-    sql = _stub_sql_chain(
-        ([], _allowed_polygon_layer_row()),
-        (
-            ["geom_geojson"],
-            [
-                ['{"type":"Polygon","coordinates":[[[0,0],[1,1],[0,0]]]}'],
-                [None],
-                ["this is not json"],
-            ],
-        ),
-    )
-    result = add_layer_impl(sql, "cat", "hazard_ppri_communes")
-    assert result["row_count"] == 1
-    assert len(result["geojson"]["features"]) == 1
-
-
-def test_add_layer_applies_where_filter() -> None:
-    sql = _stub_sql_chain(
-        ([], _allowed_polygon_layer_row()),
-        (["geom_geojson", "code_dep"], [['{"type":"Polygon","coordinates":[]}', "069"]]),
-    )
-    result = add_layer_impl(sql, "cat", "hazard_ppri_communes", where={"code_dep": "069"})
-    assert result["where"] == {"code_dep": "069"}
-    assert result["row_count"] == 1
-
-    # The data query (call #2) must carry `code_dep` as a bound parameter
-    # and NOT inline it into the SQL string.
-    data_call = sql.execute_statement.call_args_list[1]
-    statement = data_call.kwargs["statement"]
-    params = data_call.kwargs["parameters"]
-    assert "`code_dep` = :w_code_dep" in statement
-    assert "069" not in statement  # value flows only via the bind param
-    code_dep_param = next(p for p in params if p.name == "w_code_dep")
-    assert code_dep_param.value == "069"
-    assert code_dep_param.type == "STRING"
-
-
-def test_add_layer_applies_bbox_filter() -> None:
-    sql = _stub_sql_chain(
-        ([], _allowed_polygon_layer_row()),
-        (["geom_geojson"], [['{"type":"Polygon","coordinates":[]}']]),
-    )
-    result = add_layer_impl(sql, "cat", "hazard_ppri_communes", bbox=(4.5, 45.4, 5.2, 46.1))
-    assert result["bbox"] == [4.5, 45.4, 5.2, 46.1]
-
-    # ST_Intersects with bind-parameter WKT must appear in the SQL.
-    data_call = sql.execute_statement.call_args_list[1]
-    statement = data_call.kwargs["statement"]
-    params = data_call.kwargs["parameters"]
-    assert "ST_Intersects(geometry, ST_GeomFromText(:bbox_wkt, 4326))" in statement
-    bbox_param = next(p for p in params if p.name == "bbox_wkt")
-    assert bbox_param.value.startswith("POLYGON((4.5 45.4")
-
-
-def test_add_layer_passes_table_fq_as_parameter_marker() -> None:
-    sql = _stub_sql_chain(
-        ([], _allowed_polygon_layer_row()),
-        (["geom_geojson"], []),
-    )
+def test_add_layer_only_consults_the_allowlist() -> None:
+    """The new path doesn't fetch features — exactly one warehouse call
+    (the allowlist lookup) is expected."""
+    sql = _stub_sql_chain(([], _allowed_polygon_layer_row()))
     add_layer_impl(sql, "cat", "hazard_ppri_communes")
-    # 2nd call is the add_layer query.
-    data_call = sql.execute_statement.call_args_list[1]
-    params = data_call.kwargs["parameters"]
-    fq = next(p for p in params if p.name == "table_fq")
-    assert isinstance(fq, StatementParameterListItem)
-    assert fq.value == "cat.catnat_silver.hazard_ppri_communes"
+    assert sql.execute_statement.call_count == 1
 
 
 # --- remove_layer -----------------------------------------------------
@@ -209,9 +122,7 @@ def test_remove_layer_returns_op_payload_no_sql() -> None:
 
 
 def test_zoom_to_returns_geom_geojson() -> None:
-    sql = _stub_sql_chain(
-        ([], [['{"type":"Point","coordinates":[4.85,45.75]}']]),
-    )
+    sql = _stub_sql_chain(([], [['{"type":"Point","coordinates":[4.85,45.75]}']]))
     out = zoom_to_impl(sql, geom_wkt="POINT(4.85 45.75)")
     assert out["op"] == "zoom_to"
     assert out["geom_geojson"]["type"] == "Point"
@@ -239,7 +150,7 @@ def test_style_layer_requires_at_least_one_field() -> None:
         style_layer_impl("any")
 
 
-# Quiet a flake-prone interaction between `MagicMock(spec=...)` and
-# json.dumps when properties include strings — the test setup is correct
-# but we surface a hint if it changes.
+# Re-export json so the test file's `import json` doesn't get flagged
+# as unused by ruff in case the existing geojson-string assertions are
+# removed entirely.
 _ = json

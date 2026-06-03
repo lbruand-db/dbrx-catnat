@@ -53,9 +53,11 @@ export type MapOp =
           op: "add_layer";
           layer_id: string;
           peril: string;
-          geojson: GeoJSON.FeatureCollection;
+          /** Slippy-map tile URL template the FE feeds to
+           * `L.vectorGrid.protobuf`. The Lakebase mirror serves these
+           * on demand via `/api/tiles/<layer>/{z}/{x}/{y}.pbf`. */
+          tile_url: string;
           style: Record<string, unknown>;
-          row_count: number;
           status: "ok";
       }
     | {

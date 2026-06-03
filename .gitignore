@@ -38,3 +38,6 @@ Thumbs.db
 .env
 .env.local
 *.pem
+
+# Node — vitest / bun caches if commands run from the repo root
+node_modules/

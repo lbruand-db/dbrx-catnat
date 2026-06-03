@@ -389,6 +389,39 @@ def pipeline_portfolio(
 
 
 @app.command()
+def mirror(
+    layer: list[str] = typer.Option(
+        None,
+        "--layer",
+        help="Only mirror these layer_ids (repeatable). Default: all displayable polygons.",
+    ),
+) -> None:
+    """Mirror displayable silver geometries from UC Delta → Lakebase PostGIS.
+
+    Reads `catnat_silver.layer_index`, picks the polygon-grain
+    displayable layers, and replicates each one into `geo.<layer_id>`
+    in the `catnat-tiles` Lakebase project (SPEC §10.7 + §4.5). Builds
+    a GIST index on the geometry column afterwards. Idempotent — each
+    run `DROP TABLE … CASCADE` + `CREATE` so leftover state can't
+    drift.
+
+    Run from a laptop:
+
+        uv run catnat mirror
+        uv run catnat mirror --layer admin_communes --layer hazard_ppri_communes
+    """
+    from catnat import mirror as mirror_mod
+
+    summary = mirror_mod.run(layers=layer or None)
+    if not summary:
+        console.print("[yellow]No layers mirrored.[/yellow]")
+        raise typer.Exit(code=0)
+    console.print("\n[bold green]✓[/bold green] Mirror complete:")
+    for layer_id, n in summary.items():
+        console.print(f"  - {layer_id}: {n:>6,} rows")
+
+
+@app.command()
 def bench(
     n_runs: int = typer.Option(5, "-n", "--n-runs", help="Timed iterations per query."),
     no_warmup: bool = typer.Option(
