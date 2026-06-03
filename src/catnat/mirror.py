@@ -103,6 +103,20 @@ def _read_layer_rows(
         )
         rows.extend(chunk.data_array or [])
         next_idx = chunk.next_chunk_index
+
+    # Fail loud on partial reads. The chunk-pagination bug that lost
+    # 242/496 communes (commit d9b942a) was internally consistent —
+    # the FE rendered what it got, the agent said "237 features", no
+    # error anywhere. Asserting the row count against the manifest
+    # turns a silent geographic-data hole into a hard mirror failure.
+    expected = response.manifest.total_row_count if response.manifest else None
+    if expected is not None and len(rows) != expected:
+        raise RuntimeError(
+            f"partial read of {layer.layer_id}: got {len(rows)} rows, "
+            f"manifest says {expected}. Likely a chunk-pagination drop — "
+            f"do NOT push to Lakebase or the demo map will silently lose "
+            f"features."
+        )
     return columns, rows
 
 
