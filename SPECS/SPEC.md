@@ -45,47 +45,48 @@ The chat agent is the **shared entry point** for all four — they ask different
 ## 3. Architecture (logical)
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  Databricks App (Node/React + FastAPI)                                  │
-│  ┌──────────────────┐  ┌────────────────────┐  ┌─────────────────────┐  │
-│  │  Leaflet pane    │  │  Kepler.gl pane    │  │  Chat / Agent pane  │  │
-│  │  (operational)   │  │  (analytical)      │  │  (NL → actions)     │  │
-│  └────────┬─────────┘  └──────────┬─────────┘  └──────────┬──────────┘  │
-│           │  layer ops             │  view configs         │             │
-│           └────────────┬───────────┴───────────────────────┘             │
-│                        │                                                 │
-│                  Agent runtime (Claude via Foundation Model API)         │
-│                        │                                                 │
-│                  MCP server (stdio/HTTP) exposing tools:                 │
-│                    • list_layers / add_layer / remove_layer              │
-│                    • query_layer (spatial SQL)                           │
-│                    • buffer / intersect / nearest                        │
-│                    • zoom_to / filter_attributes                         │
-│                    • run_genie (portfolio Q&A)                           │
-└────────────────────────────┬────────────────────────────────────────────┘
-                             │
-              ┌──────────────┴───────────────┐
-              │                              │
-        ┌─────▼──────┐                ┌──────▼──────┐
-        │ Databricks │                │   Genie     │
-        │ SQL WH     │                │   Space     │
-        │ (Photon,   │                │ (curated    │
-        │  ST_/H3)   │                │  semantic)  │
-        └─────┬──────┘                └──────┬──────┘
-              │                              │
-        ┌─────▼──────────────────────────────▼──────┐
-        │           Unity Catalog                   │
-        │  ┌─────────────────────────────────────┐  │
-        │  │  catnat.bronze  (raw ingests)       │  │
-        │  │  catnat.silver  (typed, geo-tidy)   │  │
-        │  │  catnat.gold    (H3-indexed marts)  │  │
-        │  └─────────────────────────────────────┘  │
-        └───────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│  Databricks App (Node/React + FastAPI)                                    │
+│  ┌──────────────────┐  ┌────────────────────┐  ┌─────────────────────┐    │
+│  │  Leaflet pane    │  │  Kepler.gl pane    │  │  Chat / Agent pane  │    │
+│  │  (operational)   │  │  (analytical)      │  │  (NL → actions)     │    │
+│  └────────┬─────────┘  └──────────┬─────────┘  └──────────┬──────────┘    │
+│           │  L.vectorGrid.protobuf │  view configs         │               │
+│           │  /api/tiles/<layer>/{z}/{x}/{y}.pbf            │               │
+│           └────────────┬───────────┴───────────────────────┘               │
+│                        │                                                   │
+│                  Agent runtime (Claude via Foundation Model API)           │
+│                        │                                                   │
+│                  MCP server (HTTP/SSE) exposing tools:                     │
+│                    • list_layers / add_layer / remove_layer                │
+│                    • query_layer (spatial SQL)                             │
+│                    • buffer / intersect / nearest                          │
+│                    • zoom_to / style_layer / filter_attributes             │
+│                    • run_genie (portfolio Q&A)                             │
+└────────┬───────────────────────┬─────────────────────────┬─────────────────┘
+         │                       │                         │
+         │ MVT tiles             │ ad-hoc spatial SQL      │ analytical Q&A
+   ┌─────▼──────────┐      ┌─────▼──────────┐        ┌─────▼──────┐
+   │ Lakebase       │      │ Databricks     │        │   Genie    │
+   │ PostGIS        │      │ SQL Warehouse  │        │   Space    │
+   │ (ST_AsMVT,     │      │ (Photon,       │        │ (curated   │
+   │  GIST indexes) │      │  ST_*, H3)     │        │  semantic) │
+   └─────▲──────────┘      └─────┬──────────┘        └─────┬──────┘
+         │ daily mirror sync     │                         │
+   ┌─────┴───────────────────────▼─────────────────────────▼──────┐
+   │                       Unity Catalog                          │
+   │   ┌────────────────────────────────────────────────────────┐ │
+   │   │  catnat.bronze  (raw ingests)                          │ │
+   │   │  catnat.silver  (typed, geo-tidy — source of truth)    │ │
+   │   │  catnat.gold    (H3-indexed marts)                     │ │
+   │   └────────────────────────────────────────────────────────┘ │
+   └──────────────────────────────────────────────────────────────┘
 ```
 
 ### Why these choices
 
-- **Databricks SQL + Photon** for spatial: native `ST_*` functions and **H3** indexing land in GA; no Mosaic dependency required for the core demo. (Mosaic stays optional for raster overlays.)
+- **Databricks SQL + Photon** for spatial analytics: native `ST_*` functions and **H3** indexing land in GA; no Mosaic dependency required for the core demo. (Mosaic stays optional for raster overlays.)
+- **Lakebase (Postgres + PostGIS)** for vector-tile serving — UC silver geometries are mirrored into a Lakebase `geo.*` schema, and `ST_AsMVT` generates Mapbox Vector Tiles on demand for the Leaflet pane (§10.7). The mirror is one-way; UC stays the source of truth.
 - **Unity Catalog** as the source of truth for layers — every layer the LLM offers is a UC table or view. Governance and lineage come for free.
 - **Genie** is reused (not rebuilt) as the analytical Q&A backend; the MCP server wraps it as a tool.
 - **Two map panes** because they answer different questions: Leaflet is best for operational layered work (popups, draw, address lookup); Kepler is best for big-data analytical views (hex bins, time animation, side-by-side).
@@ -172,6 +173,24 @@ We don't rewrite ingestion plumbing where a sibling project already does it well
 
   **Impact on Phase 0**: P0 estimate in §7 drops by ~1 day — no own-IGN-ingest to write.
 
+### 4.5 Serving mirror (Lakebase PostGIS)
+
+Geometries the Leaflet pane renders go through a **Lakebase Postgres**
+instance with the **PostGIS** extension. A daily DAB job
+(`mirror_silver_to_lakebase`) replicates each row of
+`catnat_silver.layer_index` where `is_displayable = true` and
+`geom_column` is set, into a matching `geo.<layer_id>` table — same
+attribute columns, geometry stored as PostGIS `GEOMETRY(geometry, 4326)`
+with a GIST index. The mirror is one-way; UC remains the source of truth
+and the analytical SQL surface. Lakebase exists solely as the
+tile-serving layer.
+
+The vector-tile endpoint (`/api/tiles/<layer>/{z}/{x}/{y}.pbf`,
+implemented in P4.5) runs an `ST_AsMVT` + `ST_AsMVTGeom` query against
+this mirror — same shape as the
+[`lakebase-vector-tile`](https://github.com/danny-db/lakebase-vector-tile)
+PoC. See §10.7 for the rationale.
+
 ---
 
 ## 5. Functional requirements
@@ -184,7 +203,15 @@ We don't rewrite ingestion plumbing where a sibling project already does it well
 - Click on feature → side panel with attributes + "Ask the agent about this".
 - **Draw tools**: point, polygon, rectangle — drawn geometry becomes a queryable input the chat can reference ("show RGA in this polygon").
 - Address search (geocoder: BAN — Base Adresse Nationale, free API).
-- Vector tile rendering for the big polygon layers; non-tiled GeoJSON for the small/event ones.
+- **Vector tile rendering** for every persistent layer via
+  [`Leaflet.VectorGrid.Protobuf`](https://github.com/Leaflet/Leaflet.VectorGrid).
+  The MCP `add_layer` tool returns a tile-URL template
+  (`/api/tiles/<layer>/{z}/{x}/{y}.pbf`); the FE wires it to a
+  `L.vectorGrid.protobuf` source with the per-peril style. Tiles are
+  generated on-demand by `ST_AsMVT` against the Lakebase mirror (§4.5,
+  §10.7). Small one-off geometries (e.g. an agent-drawn polygon, a
+  buffered point) still ride as inline GeoJSON over the chat SSE
+  channel — there's no point tiling something that lives for one turn.
 
 ### 5.2 Map UI (Kepler.gl pane)
 
@@ -269,6 +296,7 @@ Design rules:
 | **P2 — Databricks App scaffold** ✅ | ~2 days | Scaffolded with [apx](https://github.com/databricks-solutions/apx) under `packages/app/` (uv workspace member). React 18 + Vite + TypeScript (strict), Biome for lint/format, Vitest + RTL for tests. Two-pane layout: Leaflet (operational, imperative — direct map handle for the MCP `add_layer` / `style_layer` tools in P4), chat (input + history shell, agent wiring is P4). The Kepler.gl pane attempted in P2.5 was removed — `react-palm`'s React 16 reconciler fights every modern React, and the analytical view didn't earn its weight in the demo; revisit if a clear use case appears. `/api/layers` reads `catnat_silver.layer_index` via the app SP (the OBO `sql`-scope path never minted a working token on this workspace despite `user_api_scopes: ['sql']`; the app SP holds `USE CATALOG` + `USE SCHEMA` + `SELECT` on `catnat_silver`/`catnat_gold`). **14 FE tests** (Vitest) + **3 backend tests** (pytest+FastAPI TestClient) — all workspace-free, green in CI. |
 | **P3 — MCP server** ✅ | ~2 days | FastMCP server mounted at `/mcp` on the same FastAPI app (HTTP/SSE transport, SPEC §10.3). Five tools — `list_layers`, `query_layer(bbox, where, limit)`, `intersect_layer(geom_wkt)`, `nearest(point_wkt, k)`, `buffer(geom_wkt, meters)`. Allowlist enforced via `catnat_silver.layer_index` (`is_displayable = true` + schema must be `catnat_silver`/`catnat_gold`). Inline returns capped at 500 rows with binary geometries projected to GeoJSON / H3 cells to hex strings; spilling overflow to session-scoped UC tables is tracked as a P6 polish item (the SPEC §5.4 wording — agents iterate on filters fine without it). **28 MCP tests**: 14 SQL-builder units, 5 allowlist, 9 end-to-end via the in-memory MCP client. UI-mutating tools (`add_layer`, `style_layer`, `zoom_to`, `open_kepler_view`) come with the agent in P4 since they need a server→browser channel. |
 | **P4 — Agent integration** | ~2 days | Claude (Foundation Model API) wired to MCP; system prompt + suggested prompts; streaming tool calls in UI. |
+| **P4.5 — Lakebase tile serving** | ~2 days | Provision a Lakebase Postgres + PostGIS instance (`dtp-tiles`-style — see [`lakebase-vector-tile`](https://github.com/danny-db/lakebase-vector-tile)). Daily DAB job `mirror_silver_to_lakebase` syncs every displayable `catnat_silver.*` layer's geometry + attributes into a `geo.<layer_id>` table with a GIST index. New FastAPI route `/api/tiles/<layer>/{z}/{x}/{y}.pbf` runs `ST_AsMVT` + `ST_AsMVTGeom` against the mirror and returns protobuf bytes with a 5-min in-memory cache. The MCP `add_layer` tool stops emitting GeoJSON FeatureCollections and instead returns `{op: "add_layer", layer_id, tile_url, style}`; the FE swaps `L.geoJSON` for `L.vectorGrid.protobuf` (no MapLibre, see §10.7). |
 | **P5 — Genie integration** | ~1 day | Genie space curated for portfolio Q&A; `ask_genie` tool. |
 | **P6 — Demo polish** | ~2 days | Three act scripts rehearsed; failure-mode fallbacks; one pre-recorded backup. |
 
@@ -338,7 +366,7 @@ These conventions stay constant as we add PPRI, TRI, windstorms, climate, and th
 - **Pricing engine integration** — we *show* exposure deltas; we don't recompute premiums.
 - **Mobile / tablet UX** — desktop only.
 - **Authentication beyond Databricks SSO** — no per-persona role gating in v1; persona is a UI toggle, not an RBAC boundary.
-- **Mosaic, Sedona, or third-party spatial libs** — native `ST_*` + H3 only, to keep the story "vanilla Databricks".
+- **Mosaic, Sedona, or third-party spatial libs** — native `ST_*` + H3 only on the warehouse, to keep the analytical story "vanilla Databricks". Lakebase PostGIS is a deliberate exception for tile serving (§10.7): it's a Databricks-managed product, not a third-party library, and `ST_AsMVT` is the canonical PostGIS function for on-demand MVT — there is no native-Databricks equivalent yet.
 
 ---
 
@@ -360,6 +388,12 @@ These conventions stay constant as we add PPRI, TRI, windstorms, climate, and th
    - **Skipped alternatives:** XWS (Reading) stops at 2012, no recent storms; EMS Rapid Mapping is flood/fire-oriented, not windstorm; CatDat / Risk Layer / PERILS / Verisk are proprietary and not redistributable.
    - **Legal artifacts for review:** [CDS dataset licence page](https://cds.climate.copernicus.eu/datasets/sis-european-wind-storm-reanalysis) and the [Etalab 2.0 confirmation on info.gouv.fr](https://www.info.gouv.fr/actualite/meteo-france-la-reutilisation-des-donnees-publiques-devient-gratuite) (useful if we later enrich with Météo-France vigilance bulletins).
    - **Attribution:** include the Copernicus attribution string in the notebook header and in an "About this data" panel inside the app.
+
+7. **Vector tiles via Lakebase PostGIS — Leaflet stays.** Persistent map layers are served as **Mapbox Vector Tiles (MVT)** generated on-demand by `ST_AsMVT` against a **Lakebase Postgres + PostGIS** mirror of `catnat_silver.*`. Implementation pattern is the [`lakebase-vector-tile`](https://github.com/danny-db/lakebase-vector-tile) PoC (Postgres 17 + PostGIS 3.5, `asyncpg` pool, FastAPI route, 5-min in-memory tile cache). The Leaflet pane consumes them with **[`Leaflet.VectorGrid.Protobuf`](https://github.com/Leaflet/Leaflet.VectorGrid)** — no MapLibre / WebGL migration.
+   - **Why Lakebase, not the warehouse:** the Databricks SQL warehouse has no `ST_AsMVT` equivalent. Generating MVT bytes in Python (e.g. `mapbox-vector-tile`) from warehouse queries works but adds per-tile warehouse cost and a service surface. PostGIS does it in one round-trip with a battle-tested protobuf encoder.
+   - **Why Leaflet, not MapLibre:** the demo's interaction model is layered choropleth + popups + draw tools — Leaflet handles all of it. The Leaflet.VectorGrid plugin renders vector tiles on canvas without forcing a WebGL/MapLibre rewrite of the existing pane, the layer-picker UI, the `applyMapOp` dispatcher, or the chat-driven layer ops. MapLibre's edge (smooth WebGL zoom, 3D extrusions, advanced expression-based styling) doesn't pull its weight for this narrative.
+   - **Why a mirror, not a write path:** UC stays the source of truth (Delta, governance, lineage). Lakebase is a read-only projection refreshed by a DAB job; if it gets out of sync we drop and rebuild without touching the analytical layer.
+   - **Boundary with §10.5:** Lakebase PostGIS is a deliberate exception to "no third-party spatial libs" — Lakebase is a Databricks-managed product, not an external dependency. We do not use PostGIS for analytical SQL — only for the tile-encoding endpoint.
 
 ---
 
