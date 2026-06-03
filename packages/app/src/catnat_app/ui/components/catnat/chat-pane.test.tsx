@@ -100,8 +100,8 @@ describe("<ChatPane />", () => {
         const user = userEvent.setup();
         // Type the mock as fetch so `.mock.calls` infers the `[url, init]`
         // tuple. Cast only on the global assignment.
-        const fetchSpy = vi.fn<typeof fetch>(
-            async () => streamResponse('event: done\ndata: {"final_text":""}\n\n'),
+        const fetchSpy = vi.fn<typeof fetch>(async () =>
+            streamResponse('event: done\ndata: {"final_text":""}\n\n'),
         );
         globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
