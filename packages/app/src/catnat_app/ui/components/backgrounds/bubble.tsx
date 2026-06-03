@@ -37,7 +37,13 @@ function BubbleBackground({
     ...props
 }: BubbleBackgroundProps) {
     const containerRef = React.useRef<HTMLDivElement>(null);
-    React.useImperativeHandle(ref, () => containerRef.current as HTMLDivElement);
+    // `ref` arrives as React.LegacyRef from div-element props, but
+    // useImperativeHandle wants the non-legacy Ref shape. Narrow with
+    // a cast — the legacy string-ref form isn't used here in practice.
+    React.useImperativeHandle(
+        ref as React.Ref<HTMLDivElement> | undefined,
+        () => containerRef.current as HTMLDivElement,
+    );
 
     const mouseX = useMotionValue(0);
     const mouseY = useMotionValue(0);

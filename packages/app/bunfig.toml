@@ -1,0 +1,12 @@
+# Pin Bun's npm registry for this project regardless of the developer's
+# ~/.npmrc. Some developers have a Databricks-internal npm proxy
+# configured globally (~/.npmrc points at npm-proxy.dev.databricks.com)
+# — that proxy is unreachable from GitHub Actions runners, so any lock
+# file generated under it would hang `bun install --frozen-lockfile`
+# in CI forever.
+#
+# Keep this file project-local; don't promote to ~/.bunfig.toml — your
+# other repos may legitimately want the internal proxy.
+
+[install]
+registry = "https://registry.npmjs.org/"

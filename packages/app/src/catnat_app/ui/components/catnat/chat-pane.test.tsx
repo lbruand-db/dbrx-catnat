@@ -98,10 +98,12 @@ describe("<ChatPane />", () => {
 
     it("clicking a suggested prompt sends it directly", async () => {
         const user = userEvent.setup();
-        const fetchSpy = vi.fn(async () =>
-            streamResponse('event: done\ndata: {"final_text":""}\n\n'),
-        ) as unknown as typeof fetch;
-        globalThis.fetch = fetchSpy;
+        // Type the mock as fetch so `.mock.calls` infers the `[url, init]`
+        // tuple. Cast only on the global assignment.
+        const fetchSpy = vi.fn<typeof fetch>(
+            async () => streamResponse('event: done\ndata: {"final_text":""}\n\n'),
+        );
+        globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
         render(<ChatPane />);
         const prompts = screen.getAllByTestId("suggested-prompt");
