@@ -62,28 +62,58 @@ def _enumerate_layers(ws: WorkspaceClient) -> list[LayerToMirror]:
     return out
 
 
+# Bbox-scope a layer at read time when its full size would overflow
+# the Statement Execution API's 26 MB inline-result cap.
+# `hazard_rga_susceptibility` is national (~50K polygons, ~1 GB
+# of WKT) and is the only one over the limit today. The bbox covers
+# Rhône (dept 069 — SPEC §4.4 v1 scope) plus the four neighbouring
+# depts whose communes overlap dbtopo-bricks (01 Ain, 38 Isère,
+# 42 Loire, 71 Saône-et-Loire).
+#
+# Bumping this set unconditionally is wrong: a too-tight bbox dropped
+# TRI's Mediterranean footprints (lat ~43) and 75% of PPRI's Ain rows
+# (lat ~46) when applied across the board. Layers that already fit
+# stay unbounded.
+#
+# The proper long-term fix is `disposition=EXTERNAL_LINKS` (paginated
+# chunks instead of inline), tracked as a P6 polish item.
+LAYERS_NEEDING_BBOX_SCOPE: frozenset[str] = frozenset({"hazard_rga_susceptibility"})
+MIRROR_BBOX_WKT = (
+    "POLYGON((3.9 45.2, 5.5 45.2, 5.5 46.6, 3.9 46.6, 3.9 45.2))"
+)
+
+
 def _read_layer_rows(
     ws: WorkspaceClient, layer: LayerToMirror
 ) -> tuple[list[str], list[list[object]]]:
     """SELECT every row of the layer, with geometry projected to WKT.
 
-    For v1 we load each layer fully into memory before pushing — fine
-    for dept-069 (each layer is a few thousand rows max). The
+    For v1 we load each layer fully into memory before pushing. The
     Statement Execution API splits results across chunks (~256 rows
     each for polygon layers); we have to chase `next_chunk_index` to
     get the full layer. Skipping that step is how 242 of 496 communes
     silently went missing on the first mirror run.
     """
+    params: list[StatementParameterListItem] = [
+        StatementParameterListItem(name="table_fq", value=layer.table_fq, type="STRING"),
+    ]
+    where_clause = ""
+    if layer.layer_id in LAYERS_NEEDING_BBOX_SCOPE:
+        where_clause = (
+            f"WHERE ST_Intersects({layer.geom_column}, "
+            f"ST_GeomFromText(:bbox_wkt, 4326))"
+        )
+        params.append(
+            StatementParameterListItem(name="bbox_wkt", value=MIRROR_BBOX_WKT, type="STRING")
+        )
     sql = (
         f"SELECT ST_AsText({layer.geom_column}) AS geom_wkt, "
-        f"* EXCEPT ({layer.geom_column}) FROM IDENTIFIER(:table_fq)"
-    )
+        f"* EXCEPT ({layer.geom_column}) FROM IDENTIFIER(:table_fq) {where_clause}"
+    ).strip()
     response = ws.statement_execution.execute_statement(
         warehouse_id=CONFIG.warehouse_id,
         statement=sql,
-        parameters=[
-            StatementParameterListItem(name="table_fq", value=layer.table_fq, type="STRING")
-        ],
+        parameters=params,
         wait_timeout="50s",
     )
     if not response.status or response.status.state != StatementState.SUCCEEDED:
