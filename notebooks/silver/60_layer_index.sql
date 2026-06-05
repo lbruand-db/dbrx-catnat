@@ -38,22 +38,22 @@ SELECT
   h3_column, geom_column, license, is_displayable, description
 FROM (VALUES
   ('hazard_rga_susceptibility',  'drought',   'silver', 'polygon',
-   NULL,  'geometry', 'Etalab 2.0',          false,
-   'BRGM clay-shrinkage susceptibility polygons (silver), 1-4 levels.'),
+   NULL,  'geometry', 'Etalab 2.0',          true,
+   'BRGM clay-shrinkage susceptibility polygons (silver), 1-4 levels. Visualise with add_layer; analytical work prefers hazard_rga_h3.'),
   ('hazard_rga_h3',              'drought',   'gold',   'h3_r9_cell',
    'h3',  NULL,       'Etalab 2.0',          true,
    'BRGM clay-shrinkage susceptibility decomposed to H3 r=9 cells.'),
 
   ('hazard_ppri_communes',       'flood',     'silver', 'polygon',
-   NULL,  'geometry', 'Etalab 2.0',          false,
-   'PPR Inondation commune-level footprints (approuv + prescrit).'),
+   NULL,  'geometry', 'Etalab 2.0',          true,
+   'PPR Inondation commune-level footprints (approuv + prescrit). Visualise with add_layer; analytical work prefers hazard_ppri_communes_h3.'),
   ('hazard_ppri_communes_h3',    'flood',     'gold',   'h3_r9_cell',
    'h3',  NULL,       'Etalab 2.0',          true,
    'PPRI commune footprints decomposed to H3 r=9 cells.'),
 
   ('hazard_tri_flood',           'flood',     'silver', 'polygon',
-   NULL,  'geometry', 'Etalab 2.0',          false,
-   'TRI hazard maps (scenario x intensity grid), polygon footprints.'),
+   NULL,  'geometry', 'Etalab 2.0',          true,
+   'TRI hazard maps (scenario x intensity grid), polygon footprints. Visualise with add_layer; analytical work prefers hazard_tri_flood_h3.'),
   ('hazard_tri_flood_h3',        'flood',     'gold',   'h3_r9_cell',
    'h3',  NULL,       'Etalab 2.0',          true,
    'TRI hazard footprints decomposed to H3 r=9 cells.'),
