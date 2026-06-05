@@ -13,7 +13,11 @@ the layer set):
 - `list_layers` — every displayable layer in the catalog.
 - `query_layer(layer_id, bbox?, where?, limit?)` — bounded SELECT against \
   an allowlisted layer. `bbox` is `[min_lon, min_lat, max_lon, max_lat]`; \
-  `where` is `{column: value}` AND-joined.
+  `where` is `{column: value}` AND-joined. **Geometry is projected to \
+  a bbox** (`<col>_xmin/_ymin/_xmax/_ymax`), NOT the full polygon — \
+  the agent can decide "where is this" from a bbox without blowing the \
+  prompt budget. If you need the full geometry of a specific feature, \
+  call `intersect_layer` with that feature's bbox.
 - `intersect_layer(layer_id, geom_wkt)` — features intersecting a WKT \
   geometry.
 - `nearest(layer_id, point_wkt, k)` — k features nearest a point.

@@ -52,18 +52,40 @@ def _bbox_polygon_wkt(min_lon: float, min_lat: float, max_lon: float, max_lat: f
     )
 
 
-def _projection(layer: AllowedLayer) -> str:
+def _projection(layer: AllowedLayer, *, geom_mode: str = "geojson") -> str:
     """Build the SELECT projection clause for the layer.
 
-    Strips heavy binary columns:
-    - `geom_column` → `ST_AsGeoJSON(col) AS <col>_geojson`
-    - `h3_column`  → `h3_h3tostring(col) AS <col>_hex`
+    `geom_mode` controls how the geometry column is surfaced:
 
-    Keeps every other column with `* EXCEPT (heavy_col)`.
+    - `"geojson"` (default) — `ST_AsGeoJSON(col) AS <col>_geojson`. The
+      agent gets the full feature shape. Used by `intersect_layer` and
+      `nearest`, where the geometry IS the answer the agent asked for
+      (and where row counts stay small — typically a handful, never
+      surveys).
+    - `"bbox"` — projects to four float columns
+      (`<col>_xmin`, `<col>_ymin`, `<col>_xmax`, `<col>_ymax`) instead.
+      ~50 bytes/row instead of multi-KB; safe to return 500 rows
+      without blowing the LLM's 1 M-token context. Used by
+      `query_layer`, the analytical surface — the agent uses bbox to
+      decide *where* a feature is, then calls `intersect_layer` if
+      it needs the actual geometry.
+
+    H3 columns always render as hex strings — those are already small.
+    Other columns pass through unchanged via `* EXCEPT (heavy_col)`.
     """
     if layer.geom_column:
         col = _safe_identifier(layer.geom_column)
-        return f"ST_AsGeoJSON({col}) AS {col}_geojson, * EXCEPT ({col})"
+        if geom_mode == "bbox":
+            return (
+                f"ST_XMin({col}) AS {col}_xmin, "
+                f"ST_YMin({col}) AS {col}_ymin, "
+                f"ST_XMax({col}) AS {col}_xmax, "
+                f"ST_YMax({col}) AS {col}_ymax, "
+                f"* EXCEPT ({col})"
+            )
+        if geom_mode == "geojson":
+            return f"ST_AsGeoJSON({col}) AS {col}_geojson, * EXCEPT ({col})"
+        raise ValueError(f"unknown geom_mode: {geom_mode!r}")
     if layer.h3_column:
         col = _safe_identifier(layer.h3_column)
         return f"h3_h3tostring({col}) AS {col}_hex, * EXCEPT ({col})"
@@ -139,8 +161,15 @@ def build_query_layer(
     ]
     where_sql = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     capped = max(1, min(limit, QUERY_LAYER_MAX_ROWS))
+    # `query_layer` is the analytical surface — agent uses it for
+    # filtering / surveys, never to ship feature geometry through the
+    # LLM context. Project geometry to a bbox (4 floats/row) so a
+    # 500-row response stays well under the 1 M-token FMAPI limit.
+    # Without this, ST_AsGeoJSON of even a few hundred RGA polygons
+    # blew the context past 2.6 M tokens and crashed the turn.
+    projection = _projection(layer, geom_mode="bbox")
     statement = (
-        f"SELECT {_projection(layer)} FROM IDENTIFIER(:table_fq) {where_sql} LIMIT {capped}"
+        f"SELECT {projection} FROM IDENTIFIER(:table_fq) {where_sql} LIMIT {capped}"
     ).strip()
     return BuiltStatement(statement=statement, parameters=params)
 

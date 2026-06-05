@@ -55,11 +55,27 @@ def _params_by_name(
 # --- build_query_layer --------------------------------------------------
 
 
-def test_query_layer_projects_geometry_to_geojson() -> None:
+def test_query_layer_projects_geometry_to_bbox_not_full_geojson() -> None:
+    """query_layer is analytical — geometry projects to a bbox (4 floats)
+    so a 500-row response can't blow the LLM's 1 M-token budget. The
+    full ST_AsGeoJSON shape is reserved for intersect_layer / nearest
+    (single-feature lookups, not surveys)."""
     b = build_query_layer(_geom_layer())
-    assert "ST_AsGeoJSON(geometry) AS geometry_geojson" in b.statement
+    assert "ST_XMin(geometry) AS geometry_xmin" in b.statement
+    assert "ST_YMin(geometry) AS geometry_ymin" in b.statement
+    assert "ST_XMax(geometry) AS geometry_xmax" in b.statement
+    assert "ST_YMax(geometry) AS geometry_ymax" in b.statement
+    # Crucially: no ST_AsGeoJSON in the query_layer projection.
+    assert "ST_AsGeoJSON" not in b.statement
     assert "* EXCEPT (geometry)" in b.statement
     assert "FROM IDENTIFIER(:table_fq)" in b.statement
+
+
+def test_intersect_layer_still_projects_full_geojson() -> None:
+    """intersect_layer is a single-feature lookup — the agent asked for
+    geometry, give it the geometry. Capped at 500 rows by limit."""
+    b = build_intersect_layer(_geom_layer(), geom_wkt="POINT(4.85 45.75)")
+    assert "ST_AsGeoJSON(geometry) AS geometry_geojson" in b.statement
 
 
 def test_query_layer_projects_h3_to_hex() -> None:
