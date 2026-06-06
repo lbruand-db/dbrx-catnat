@@ -21,6 +21,7 @@ import logging
 import os
 import time
 from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 from mcp.shared.memory import create_connected_server_and_client_session
@@ -178,11 +179,7 @@ def _format_context(context: dict[str, Any] | None) -> str:
         if not shown and props:
             shown = dict(list(props.items())[:4])
         attr_str = ", ".join(f"{k}={v!r}" for k, v in shown.items()) if shown else "(no key attrs)"
-        latlng_str = (
-            f" @ ({latlng[0]:.4f}, {latlng[1]:.4f})"
-            if latlng and len(latlng) == 2
-            else ""
-        )
+        latlng_str = f" @ ({latlng[0]:.4f}, {latlng[1]:.4f})" if latlng and len(latlng) == 2 else ""
         lines.append(f"- Selection: layer={layer_id} {attr_str}{latlng_str}")
         lines.append(
             "  ↑ The user clicked this feature. Treat 'this', 'ce truc', "
@@ -191,12 +188,20 @@ def _format_context(context: dict[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
+def _default_mcp_session_factory() -> AbstractAsyncContextManager[Any]:
+    """Default MCP context: in-memory transport over the real catnat server."""
+    return create_connected_server_and_client_session(mcp_server)
+
+
 async def run_agent(
     messages: list[dict[str, Any]],
     *,
     context: dict[str, Any] | None = None,
     client_factory: Callable[[], AsyncOpenAI] = get_client,
     model: str | None = None,
+    mcp_session_factory: Callable[
+        [], AbstractAsyncContextManager[Any]
+    ] = _default_mcp_session_factory,
 ) -> AsyncIterator[AgentEvent]:
     """Run one agent turn against the catnat MCP server.
 
@@ -205,12 +210,16 @@ async def run_agent(
     current map state (viewport, active layers, etc.) — folded into the
     system prompt so the agent reads it without a tool call. Yields
     events the route streams as SSE.
+
+    `mcp_session_factory` is the seam used by golden-trace replay tests
+    and the `scripts/probe_agent.py --record` recorder to swap MCP
+    without touching the loop.
     """
     client = client_factory()
     used_model = model or get_model()
     t0 = time.monotonic()
 
-    async with create_connected_server_and_client_session(mcp_server) as mcp_session:
+    async with mcp_session_factory() as mcp_session:
         tools_response = await mcp_session.list_tools()
         openai_tools = [_mcp_to_openai_tool(t) for t in tools_response.tools]
 

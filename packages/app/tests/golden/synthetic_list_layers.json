@@ -1,0 +1,89 @@
+{
+  "name": "synthetic_list_layers",
+  "captured_at": "2026-06-06T00:00:00+00:00",
+  "_note": "Hand-crafted minimal trace that pins the replay pipeline (chunk revival, tool-call routing, end-of-iteration → done). Real traces should be captured via `uv run python scripts/probe_agent.py --record tests/golden/<name>.json '<prompt>'` and live alongside this one.",
+  "input": {
+    "messages": [{"role": "user", "content": "Liste les couches disponibles."}],
+    "context": null
+  },
+  "tools_schema": [
+    {
+      "name": "list_layers",
+      "description": "List displayable layers from the catnat catalogue.",
+      "inputSchema": {"type": "object", "properties": {}}
+    }
+  ],
+  "openai_iterations": [
+    [
+      {
+        "id": "chatcmpl-syn-1",
+        "object": "chat.completion.chunk",
+        "choices": [
+          {
+            "index": 0,
+            "delta": {
+              "role": "assistant",
+              "content": null,
+              "tool_calls": [
+                {
+                  "index": 0,
+                  "id": "c1",
+                  "type": "function",
+                  "function": {"name": "list_layers", "arguments": null}
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "id": "chatcmpl-syn-2",
+        "object": "chat.completion.chunk",
+        "choices": [
+          {"index": 0, "delta": {"role": "assistant", "content": "Voici ", "tool_calls": null}}
+        ]
+      },
+      {
+        "id": "chatcmpl-syn-2",
+        "object": "chat.completion.chunk",
+        "choices": [
+          {"index": 0, "delta": {"content": "la liste.", "tool_calls": null}}
+        ]
+      }
+    ]
+  ],
+  "mcp_calls": [
+    {
+      "name": "list_layers",
+      "arguments": {},
+      "is_error": false,
+      "structured_content": {
+        "result": [
+          {"layer_id": "hazard_ppri_communes", "peril": "flood", "geom_kind": "polygon"}
+        ]
+      },
+      "content_text": []
+    }
+  ],
+  "events": [
+    {"name": "tool_call", "data": {"id": "c1", "name": "list_layers", "arguments": {}}},
+    {
+      "name": "tool_result",
+      "data": {
+        "id": "c1",
+        "name": "list_layers",
+        "result": {
+          "result": [
+            {"layer_id": "hazard_ppri_communes", "peril": "flood", "geom_kind": "polygon"}
+          ]
+        },
+        "is_error": false
+      }
+    },
+    {"name": "delta", "data": {"text": "Voici "}},
+    {"name": "delta", "data": {"text": "la liste."}},
+    {"name": "done", "data": {"final_text": "Voici la liste."}}
+  ]
+}
