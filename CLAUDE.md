@@ -7,14 +7,18 @@ you need the demo narrative or the v1 scope decisions.
 ## What this is
 
 **GeoCatNat** — a Databricks geospatial demo for French P&C insurers covering
-the three CatNat perils (flood, drought, storm). Phase 0 (data foundation) is
-in progress; the eventual demo is an "agentic GIS" with Leaflet + Kepler.gl
-panes driven by an MCP-backed LLM agent over Unity Catalog data.
+the three CatNat perils (flood, drought, storm). The demo is an "agentic
+GIS": a Leaflet pane driven by an MCP-backed LLM agent over Unity Catalog
+data, with PostGIS vector-tile serving for the displayable layers.
 
-**Phases 0, 0.5, 1, 2, 3 closed.** See
+**Phases 0, 0.5, 1, 2, 3, 4, 4.5 closed.** Retrospectives:
 [`SPECS/PHASE_0_RETROSPECTIVE.md`](SPECS/PHASE_0_RETROSPECTIVE.md) for the
-data-foundation end-state, and [`SPECS/BENCHMARKS.md`](SPECS/BENCHMARKS.md)
-for the P1 timing numbers (6/6 queries < 1 s on a Small Serverless SQL WH).
+data-foundation end-state, [`SPECS/PHASE_4_RETROSPECTIVE.md`](SPECS/PHASE_4_RETROSPECTIVE.md)
+for the agent + tile-serving end-state (also covers the gotchas we hit on
+OBO token scopes, mirror chunk pagination, and the 26 MB inline-result cap).
+[`SPECS/BENCHMARKS.md`](SPECS/BENCHMARKS.md) holds the P1 timing numbers
+(6/6 queries < 1 s on a Small Serverless SQL WH). Next phase per SPEC §7
+is **P5 — Genie integration**.
 We have **3 hazard layers + 1 reference layer + synthetic portfolio + a
 layer registry**: RGA, PPRI, TRI, IGN BD TOPO communes (dept 069 Rhône via
 [`dbtopo-bricks`](https://github.com/lbruand-db/dbtopo-bricks)), plus
