@@ -41,3 +41,7 @@ Thumbs.db
 
 # Node — vitest / bun caches if commands run from the repo root
 node_modules/
+
+# Playwright outputs (HTML report + traces + screenshots)
+playwright-report/
+test-results/
