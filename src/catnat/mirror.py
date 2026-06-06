@@ -78,9 +78,7 @@ def _enumerate_layers(ws: WorkspaceClient) -> list[LayerToMirror]:
 # The proper long-term fix is `disposition=EXTERNAL_LINKS` (paginated
 # chunks instead of inline), tracked as a P6 polish item.
 LAYERS_NEEDING_BBOX_SCOPE: frozenset[str] = frozenset({"hazard_rga_susceptibility"})
-MIRROR_BBOX_WKT = (
-    "POLYGON((3.9 45.2, 5.5 45.2, 5.5 46.6, 3.9 46.6, 3.9 45.2))"
-)
+MIRROR_BBOX_WKT = "POLYGON((3.9 45.2, 5.5 45.2, 5.5 46.6, 3.9 46.6, 3.9 45.2))"
 
 
 def _read_layer_rows(
@@ -99,10 +97,7 @@ def _read_layer_rows(
     ]
     where_clause = ""
     if layer.layer_id in LAYERS_NEEDING_BBOX_SCOPE:
-        where_clause = (
-            f"WHERE ST_Intersects({layer.geom_column}, "
-            f"ST_GeomFromText(:bbox_wkt, 4326))"
-        )
+        where_clause = f"WHERE ST_Intersects({layer.geom_column}, ST_GeomFromText(:bbox_wkt, 4326))"
         params.append(
             StatementParameterListItem(name="bbox_wkt", value=MIRROR_BBOX_WKT, type="STRING")
         )
