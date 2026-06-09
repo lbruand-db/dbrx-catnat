@@ -76,3 +76,78 @@ jobs:
         run: bunx tsc --noEmit
       - name: Vitest
         run: bunx vitest run
+
+  app-e2e:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/app
+    env:
+      # Pin apx to the version we use locally. Bump in lockstep with the
+      # devs' `apx upgrade` to avoid CI drifting from local builds.
+      APX_VERSION: "0.3.8"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: astral-sh/setup-uv@v4
+
+      # Same lockfile normalisation as the frontend job — the bun.lock
+      # pins package URLs at the Databricks-internal mirror which CI
+      # runners can't reach.
+      - name: Normalise lockfile + .npmrc for CI runners
+        run: |
+          sed -i 's|https://npm-proxy.dev.databricks.com/|https://registry.npmjs.org/|g' bun.lock
+          echo "registry=https://registry.npmjs.org/" > .npmrc
+          if grep -q "npm-proxy.dev.databricks.com" bun.lock; then
+            echo "::error::bun.lock still has internal-proxy URLs after sed"
+            exit 1
+          fi
+
+      - run: bun install --frozen-lockfile
+
+      - name: Install apx CLI
+        working-directory: .
+        run: |
+          curl -fsSL -o /usr/local/bin/apx \
+            "https://github.com/databricks-solutions/apx/releases/download/v${APX_VERSION}/apx-x86_64-linux"
+          chmod +x /usr/local/bin/apx
+          apx --version
+
+      - name: Build FE bundle
+        # `apx frontend build` runs vite under the hood and writes the
+        # bundle to `src/catnat_app/__dist__/` — exactly where the
+        # Playwright webServer expects it (see playwright.config.ts).
+        run: apx frontend build
+
+      # Cache Chromium across CI runs. Browser tarballs are ~150 MB so
+      # this saves a meaningful chunk of wall-clock per run.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('packages/app/package.json', 'packages/app/bun.lock') }}
+
+      - name: Install Playwright Chromium
+        # `--with-deps` installs system libs Chromium needs (libgbm,
+        # libasound2, etc.); they're not cached so this still runs even
+        # on a cache hit. Browsers are skipped when the cache hits.
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: bunx playwright install --with-deps chromium
+
+      - name: Install Playwright OS deps only
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: bunx playwright install-deps chromium
+
+      - name: Run Playwright tests
+        run: bunx playwright test
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: packages/app/playwright-report/
+          retention-days: 7
