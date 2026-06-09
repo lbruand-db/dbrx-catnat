@@ -14,7 +14,10 @@ import { applyMapOp, type ManagedLayer } from "./map-dispatcher";
 interface MockVgLayer {
     addTo: ReturnType<typeof vi.fn>;
     setStyle?: ReturnType<typeof vi.fn>;
+    setFeatureStyle?: ReturnType<typeof vi.fn>;
+    resetFeatureStyle?: ReturnType<typeof vi.fn>;
     _catnatLayerId?: string;
+    _catnatSelectedFeatureId?: string;
     on?: ReturnType<typeof vi.fn>;
     /** Captured by the mock's `.on('click', ...)` so tests can fire it. */
     _clickHandler?: (e: {
@@ -34,6 +37,8 @@ beforeEach(() => {
         const layer: MockVgLayer = {
             addTo: vi.fn().mockReturnThis(),
             setStyle: vi.fn(),
+            setFeatureStyle: vi.fn(),
+            resetFeatureStyle: vi.fn(),
         };
         // Capture the click handler so we can invoke it from tests.
         layer.on = vi.fn((kind, handler) => {
@@ -87,10 +92,45 @@ describe("applyMapOp", () => {
         // ST_AsMVT writes on the backend).
         expect(options.vectorTileLayerStyles[op.layer_id]).toBeDefined();
         expect(options.vectorTileLayerStyles[op.layer_id].color).toBe("#1f77b4");
+        // `interactive: true` at top-level is what makes Canvas-tile
+        // pointer-events flow through (verified against the plugin
+        // source at L.Canvas.Tile.initialize).
+        expect(options.interactive).toBe(true);
         // Registered under the layer_id and tagged for cleanup.
         const reg = layers.get("hazard_ppri_communes");
         expect(reg).toBeDefined();
         expect(reg?._catnatLayerId).toBe("hazard_ppri_communes");
+    });
+
+    it("getFeatureId returns a stable id (not Math.random) for the same properties", () => {
+        applyMapOp(
+            {
+                op: "add_layer",
+                layer_id: "hazard_rga_susceptibility",
+                peril: "drought",
+                tile_url: "/api/tiles/hazard_rga_susceptibility/{z}/{x}/{y}.pbf",
+                style: {},
+                status: "ok",
+            },
+            map,
+            layers,
+        );
+        const [, options] = vgFactory.mock.calls[0];
+        // RGA features carry `insee_dep` + `susceptibility_code`; the
+        // bug we're regressing was returning Math.random() in that
+        // case, which made setFeatureStyle never find the same feature
+        // twice. Stable ids must be identical across two invocations.
+        const props = { insee_dep: "69", susceptibility_code: "FORT" };
+        const a = options.getFeatureId({ properties: props });
+        const b = options.getFeatureId({ properties: props });
+        expect(a).toBe(b);
+        expect(typeof a).toBe("string");
+
+        // Different properties → different id.
+        const c = options.getFeatureId({
+            properties: { insee_dep: "69", susceptibility_code: "FAIBLE" },
+        });
+        expect(c).not.toBe(a);
     });
 
     it("add_layer replaces an existing layer with the same id", () => {
@@ -197,7 +237,7 @@ describe("applyMapOp", () => {
         expect(layers.size).toBe(0);
     });
 
-    it("add_layer wires a click handler that fires onSelectionChange", () => {
+    it("add_layer wires a click handler that fires onSelectionChange + highlights", () => {
         const onSelectionChange = vi.fn();
         applyMapOp(
             {
@@ -225,6 +265,83 @@ describe("applyMapOp", () => {
             properties: { code_insee: "69123", nom_officiel: "Lyon" },
             latlng: [45.764, 4.835],
         });
+        // Visible feedback: the clicked feature gets re-symbolised.
+        expect(layer.setFeatureStyle).toHaveBeenCalledTimes(1);
+        const [featureId, highlight] = (
+            layer.setFeatureStyle as unknown as { mock: { calls: [string, unknown][] } }
+        ).mock.calls[0];
+        expect(featureId).toBe("code_insee=69123");
+        expect(highlight).toMatchObject({ color: "#ffcc00", fillColor: "#ffcc00" });
+        // First click — no prior selection to reset.
+        expect(layer.resetFeatureStyle).not.toHaveBeenCalled();
+        expect(layer._catnatSelectedFeatureId).toBe("code_insee=69123");
+    });
+
+    it("clicking a different feature resets the previous highlight before painting the new one", () => {
+        const onSelectionChange = vi.fn();
+        applyMapOp(
+            {
+                op: "add_layer",
+                layer_id: "hazard_ppri_communes",
+                peril: "flood",
+                tile_url: "/api/tiles/hazard_ppri_communes/{z}/{x}/{y}.pbf",
+                style: {},
+                status: "ok",
+            },
+            map,
+            layers,
+            onSelectionChange,
+        );
+        const layer = layers.get("hazard_ppri_communes") as unknown as MockVgLayer;
+        // First click on Lyon.
+        layer._clickHandler?.({
+            latlng: { lat: 45.764, lng: 4.835 },
+            layer: { properties: { code_insee: "69123" } },
+        });
+        // Second click on Vénissieux.
+        layer._clickHandler?.({
+            latlng: { lat: 45.697, lng: 4.886 },
+            layer: { properties: { code_insee: "69256" } },
+        });
+        // Lyon's highlight must be reverted before Vénissieux's is
+        // painted, otherwise both stay yellow and the user sees a
+        // misleading multi-selection.
+        expect(layer.resetFeatureStyle).toHaveBeenCalledWith("code_insee=69123");
+        expect(layer.setFeatureStyle).toHaveBeenCalledTimes(2);
+        const calls = (layer.setFeatureStyle as unknown as { mock: { calls: [string, unknown][] } })
+            .mock.calls;
+        expect(calls[1][0]).toBe("code_insee=69256");
+        expect(layer._catnatSelectedFeatureId).toBe("code_insee=69256");
+    });
+
+    it("clicking the same feature twice is a no-op for resetFeatureStyle", () => {
+        const onSelectionChange = vi.fn();
+        applyMapOp(
+            {
+                op: "add_layer",
+                layer_id: "x",
+                peril: "flood",
+                tile_url: "/api/tiles/x/{z}/{x}/{y}.pbf",
+                style: {},
+                status: "ok",
+            },
+            map,
+            layers,
+            onSelectionChange,
+        );
+        const layer = layers.get("x") as unknown as MockVgLayer;
+        layer._clickHandler?.({
+            latlng: { lat: 0, lng: 0 },
+            layer: { properties: { code_insee: "69123" } },
+        });
+        layer._clickHandler?.({
+            latlng: { lat: 0, lng: 0 },
+            layer: { properties: { code_insee: "69123" } },
+        });
+        // Same id both times → never reset.
+        expect(layer.resetFeatureStyle).not.toHaveBeenCalled();
+        // setFeatureStyle still fires both times — the plugin de-dupes.
+        expect(layer.setFeatureStyle).toHaveBeenCalledTimes(2);
     });
 
     it("click on a feature with no properties does not fire the callback", () => {

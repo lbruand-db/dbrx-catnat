@@ -22,6 +22,8 @@ import type { FeatureSelection, MapOp } from "@/types/chat";
 export type ManagedLayer = L.Layer & {
     /** Stash the layer_id we registered under so cleanup can match. */
     _catnatLayerId?: string;
+    /** Currently highlighted feature id (per `getFeatureId`) for selection. */
+    _catnatSelectedFeatureId?: string;
 };
 
 /** Callback signature for clicks on agent-added layers. */
@@ -30,6 +32,60 @@ export type SelectionChangeHandler = (selection: FeatureSelection | null) => voi
 interface VectorTileClickEvent {
     latlng: { lat: number; lng: number };
     layer?: { properties?: Record<string, unknown> };
+}
+
+/**
+ * Highlight style applied to the currently-clicked feature via
+ * `setFeatureStyle`. Loud on purpose — the demo audience needs to see
+ * which feature the agent thinks the user pointed at, regardless of
+ * the underlying layer's base palette. Yellow against any peril.
+ */
+const SELECTION_HIGHLIGHT_STYLE = {
+    color: "#ffcc00",
+    weight: 3,
+    fillColor: "#ffcc00",
+    fillOpacity: 0.6,
+    fill: true,
+} as const;
+
+/**
+ * Build a stable id from a feature's properties.
+ *
+ * `getFeatureId` is what makes `setFeatureStyle` / `resetFeatureStyle`
+ * work — without a stable id, the plugin can't find the same feature
+ * across tile boundaries, so the highlight flickers or never appears.
+ *
+ * We try a list of known-unique fields first (the demo's hazard layers
+ * all carry one of these), then fall back to a deterministic stringify
+ * of the whole properties dict. The fallback is the safety net —
+ * `Math.random()` (what we used to do) was the bug.
+ */
+function stableFeatureId(properties: Record<string, unknown> | undefined): string {
+    if (!properties) return "__no_props__";
+    // Ground-truthed against silver tables: communes use code_insee,
+    // PPRI rows use cod_commune, RGA's per-(commune × susceptibility)
+    // rows can be uniquely keyed by INSEE + susceptibility_code, TRI
+    // by INSEE + scenario_code. Try the cheap candidates first.
+    const stableFields = ["code_insee", "cod_commune", "id_iripprn", "id_pprn", "gid"];
+    for (const k of stableFields) {
+        const v = properties[k];
+        if (typeof v === "string" && v.length > 0) return `${k}=${v}`;
+        if (typeof v === "number") return `${k}=${v}`;
+    }
+    // Compound id: try INSEE + a discriminator for layers that store
+    // multiple rows per commune.
+    const insee = properties.insee_com ?? properties.insee_dep;
+    const disc =
+        properties.susceptibility_code ??
+        properties.scenario_code ??
+        properties.intensity_code ??
+        properties.peril_kind;
+    if (insee !== undefined && disc !== undefined) return `${insee}|${disc}`;
+    // Last resort: deterministic property stringification. Stable
+    // per-feature, even if duplicated for rows with identical
+    // attributes (rare and acceptable).
+    const keys = Object.keys(properties).sort();
+    return keys.map((k) => `${k}=${String(properties[k])}`).join("|");
 }
 
 export function applyMapOp(
@@ -58,8 +114,8 @@ export function applyMapOp(
             const layer = vgFactory(op.tile_url, {
                 rendererFactory: (L as unknown as { canvas: { tile: unknown } }).canvas.tile,
                 interactive: true,
-                getFeatureId: (f: { properties?: { code_insee?: string } }) =>
-                    f.properties?.code_insee ?? Math.random().toString(36),
+                getFeatureId: (f: { properties?: Record<string, unknown> }) =>
+                    stableFeatureId(f.properties),
                 vectorTileLayerStyles: {
                     // Layer name in the MVT must match the second
                     // arg to ST_AsMVT on the backend (= the layer_id).
@@ -74,24 +130,41 @@ export function applyMapOp(
             });
             layer._catnatLayerId = op.layer_id;
 
-            // Wire the click handler that turns a Leaflet click into a
-            // selection update. `e.layer.properties` carries the
-            // clicked vector-tile feature's attributes; `e.latlng` is
-            // the click position. The agent will see both as system
-            // context on the next /api/chat turn.
-            if (onSelectionChange) {
-                const eventfulLayer = layer as unknown as {
-                    on: (kind: "click", handler: (e: VectorTileClickEvent) => void) => void;
-                };
-                eventfulLayer.on("click", (e: VectorTileClickEvent) => {
-                    if (!e.layer?.properties) return;
-                    onSelectionChange({
-                        layer_id: op.layer_id,
-                        properties: e.layer.properties,
-                        latlng: [e.latlng.lat, e.latlng.lng],
-                    });
+            // Wire the click handler. Two responsibilities:
+            //  1. Highlight the clicked feature via `setFeatureStyle`
+            //     (loud yellow) so the user sees the click landed.
+            //  2. Fire `onSelectionChange` so the next /api/chat turn
+            //     carries the clicked feature in the reverse-channel
+            //     context block (UI.md §3.2.1).
+            //
+            // The plugin's API used here: `setFeatureStyle(id, style)`
+            // re-symbolizes the feature across every tile it spans;
+            // `resetFeatureStyle(id)` reverts. Both require the same
+            // stable id from `getFeatureId` — see `stableFeatureId`.
+            const styledLayer = layer as unknown as {
+                setFeatureStyle?: (id: string, s: unknown) => void;
+                resetFeatureStyle?: (id: string) => void;
+                on: (kind: "click", handler: (e: VectorTileClickEvent) => void) => void;
+            };
+            styledLayer.on("click", (e: VectorTileClickEvent) => {
+                if (!e.layer?.properties) return;
+                const featureId = stableFeatureId(e.layer.properties);
+                // Clear the previous selection highlight on this layer
+                // (if any) before painting the new one.
+                const prev = layer._catnatSelectedFeatureId;
+                if (prev && prev !== featureId && styledLayer.resetFeatureStyle) {
+                    styledLayer.resetFeatureStyle(prev);
+                }
+                if (styledLayer.setFeatureStyle) {
+                    styledLayer.setFeatureStyle(featureId, SELECTION_HIGHLIGHT_STYLE);
+                }
+                layer._catnatSelectedFeatureId = featureId;
+                onSelectionChange?.({
+                    layer_id: op.layer_id,
+                    properties: e.layer.properties,
+                    latlng: [e.latlng.lat, e.latlng.lng],
                 });
-            }
+            });
 
             layer.addTo(map);
             layers.set(op.layer_id, layer);
@@ -100,6 +173,10 @@ export function applyMapOp(
         case "remove_layer": {
             const existing = layers.get(op.layer_id);
             if (existing) {
+                // Clear the per-layer highlight tag before removal so a
+                // future re-add starts clean. (The layer itself is
+                // dropped, so the style reset isn't strictly needed.)
+                existing._catnatSelectedFeatureId = undefined;
                 map.removeLayer(existing);
                 layers.delete(op.layer_id);
                 // Clear any selection that pointed at the removed
